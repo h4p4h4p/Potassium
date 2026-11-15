@@ -23,6 +23,7 @@ public class AimAssist extends Module {
     public static final String TARGET_HEAD = "Head";
     public static final String TARGET_TORSO = "Torso";
     public static final String TARGET_LEGS = "Legs";
+    public static final String TARGET_LAZY = "Lazy";
 
     private final SliderSetting xSmoothSetting = new SliderSetting("X Smooth", 30, 0, 100, 1);
     private final SliderSetting ySmoothSetting = new SliderSetting("Y Smooth", 30, 0, 100, 1);
@@ -33,7 +34,7 @@ public class AimAssist extends Module {
     private final ColorSetting circleColorSetting = new ColorSetting("Circle Color", 0xFF1B395C);
     private final BooleanSetting holdAttackSetting = new BooleanSetting("Hold Attack", false);
     private final BooleanSetting wallCheckSetting = new BooleanSetting("Wall Check", true);
-    private final ModeSetting targetSetting = new ModeSetting("Target", new String[]{TARGET_HEAD, TARGET_TORSO, TARGET_LEGS}, 0);
+    private final ModeSetting targetSetting = new ModeSetting("Target", new String[]{TARGET_HEAD, TARGET_TORSO, TARGET_LEGS, TARGET_LAZY}, 0);
 
     private final Minecraft mc = Minecraft.getMinecraft();
 
@@ -75,6 +76,7 @@ public class AimAssist extends Module {
         float targetYaw = 0.0F;
         float targetPitch = 0.0F;
         double bestScore = Double.MAX_VALUE;
+        Entity bestTarget = null;
         boolean found = false;
         double maxDistance = maxDistanceSetting.getValue();
         double maxDistanceSq = maxDistance * maxDistance;
@@ -82,21 +84,9 @@ public class AimAssist extends Module {
         for (Entity entity : mc.theWorld.loadedEntityList) {
             if (entity == mc.thePlayer || entity.isDead || !(entity instanceof EntityLivingBase)) continue;
 
-            double targetX, targetY, targetZ;
-            String targetMode = targetSetting.getValue();
-            if (TARGET_HEAD.equals(targetMode)) {
-                targetX = entity.posX;
-                targetY = entity.posY + entity.getEyeHeight();
-                targetZ = entity.posZ;
-            } else if (TARGET_TORSO.equals(targetMode)) {
-                targetX = entity.posX;
-                targetY = entity.posY + entity.getEyeHeight() * 0.5;
-                targetZ = entity.posZ;
-            } else {
-                targetX = entity.posX;
-                targetY = entity.posY;
-                targetZ = entity.posZ;
-            }
+            double targetX = entity.posX;
+            double targetY = aimY(entity);
+            double targetZ = entity.posZ;
 
             double dx = targetX - px;
             double dy = targetY - py;
@@ -120,11 +110,14 @@ public class AimAssist extends Module {
                 bestScore = score;
                 targetYaw = yaw;
                 targetPitch = pitch;
+                bestTarget = entity;
                 found = true;
             }
         }
 
         if (!found) return;
+        // Lazy only helps when the crosshair is not already sitting on the hitbox.
+        if (TARGET_LAZY.equals(targetSetting.getValue()) && crosshairOnHitbox(bestTarget)) return;
 
         double sensitivity = sensitivitySetting.getValue();
         float yawFactor = (float) (xSmoothSetting.getValue() / 100.0 * sensitivity);
@@ -147,18 +140,33 @@ public class AimAssist extends Module {
 
     private boolean hasLineOfSight(Entity target) {
         Vec3 eyes = new Vec3(mc.thePlayer.posX, mc.thePlayer.posY + mc.thePlayer.getEyeHeight(), mc.thePlayer.posZ);
-        String targetMode = targetSetting.getValue();
-        double targetY;
-        if (TARGET_HEAD.equals(targetMode)) {
-            targetY = target.posY + target.getEyeHeight();
-        } else if (TARGET_TORSO.equals(targetMode)) {
-            targetY = target.posY + target.getEyeHeight() * 0.5;
-        } else {
-            targetY = target.posY;
-        }
-        Vec3 targetEyes = new Vec3(target.posX, targetY, target.posZ);
+        Vec3 targetEyes = new Vec3(target.posX, aimY(target), target.posZ);
         MovingObjectPosition hit = mc.theWorld.rayTraceBlocks(eyes, targetEyes, false, true, false);
         return hit == null;
+    }
+
+    /** Y of the point the selected aim mode targets. */
+    private double aimY(Entity entity) {
+        String targetMode = targetSetting.getValue();
+        if (TARGET_HEAD.equals(targetMode)) return entity.posY + entity.getEyeHeight();
+        if (TARGET_TORSO.equals(targetMode)) return entity.posY + entity.getEyeHeight() * 0.5D;
+        if (TARGET_LAZY.equals(targetMode)) return entity.posY + entity.height * 0.5D;
+        return entity.posY;
+    }
+
+    /**
+     * Whether the crosshair already sits on the entity's hitbox, with a block in front of it
+     * counting as a miss. Uses the live rotation so it matches what the player is looking at.
+     */
+    private boolean crosshairOnHitbox(Entity target) {
+        Vec3 eyes = mc.thePlayer.getPositionEyes(1.0F);
+        Vec3 look = mc.thePlayer.getLook(1.0F);
+        double reach = maxDistanceSetting.getValue();
+        Vec3 end = eyes.addVector(look.xCoord * reach, look.yCoord * reach, look.zCoord * reach);
+
+        MovingObjectPosition blockHit = mc.theWorld.rayTraceBlocks(eyes, end, false, true, false);
+        if (blockHit != null) end = blockHit.hitVec;
+        return target.getEntityBoundingBox().calculateIntercept(eyes, end) != null;
     }
 
     @SubscribeEvent
