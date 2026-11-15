@@ -1,4 +1,4 @@
-Velocity Client is developed by AL3XMABAH0
+Potassium Client is developed by AL3XMABAH0
 
   To open the ClickGUI use K
 

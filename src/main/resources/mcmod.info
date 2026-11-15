@@ -1,15 +1,15 @@
 [
   {
-    "modid": "velocity",
-    "name": "Velocity",
+    "modid": "potassium",
+    "name": "Potassium",
     "description": "Combat and utility modules for 1.8.9.",
     "version": "${version}",
     "mcversion": "${mcversion}",
     "url": "",
     "updateUrl": "",
-    "authorList": ["kalca"],
+    "authorList": [],
     "credits": "",
-    "logoFile": "assets/velocity/textures/gui/logo.png",
+    "logoFile": "assets/potassium/textures/gui/logo.png",
     "screenshots": [],
     "dependencies": []
   }

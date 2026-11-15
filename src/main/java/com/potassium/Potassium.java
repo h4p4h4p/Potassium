@@ -1,0 +1,166 @@
+package com.potassium;
+
+import com.potassium.command.CommandManager;
+import com.potassium.config.ConfigManager;
+import com.potassium.gui.ClickGUI;
+import com.potassium.gui.Theme;
+import com.potassium.module.Interface;
+import com.potassium.module.Module;
+import com.potassium.module.ModuleManager;
+import com.potassium.util.RenderUtil;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.ScaledResolution;
+import net.minecraft.client.settings.KeyBinding;
+import net.minecraftforge.client.event.RenderGameOverlayEvent;
+import net.minecraftforge.common.MinecraftForge;
+import net.minecraftforge.fml.common.Mod;
+import net.minecraftforge.fml.common.event.FMLInitializationEvent;
+import net.minecraftforge.fml.common.event.FMLPreInitializationEvent;
+import net.minecraftforge.fml.common.eventhandler.SubscribeEvent;
+import net.minecraftforge.fml.common.gameevent.TickEvent;
+import org.lwjgl.input.Keyboard;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+@Mod(modid = Potassium.MODID, name = Potassium.NAME, version = Potassium.VERSION)
+public class Potassium {
+
+    public static final String MODID = "potassium";
+    public static final String NAME = "Potassium";
+    public static final String VERSION = "0.3";
+
+    public static Potassium INSTANCE;
+
+    public ModuleManager moduleManager;
+    public ConfigManager configManager;
+    public ClickGUI clickGui;
+    public CommandManager commandManager;
+
+    public final KeyBinding clickGuiKey = new KeyBinding("ClickGUI", Keyboard.KEY_K, "Potassium");
+
+    private final Minecraft mc = Minecraft.getMinecraft();
+
+    @Mod.EventHandler
+    public void preInit(FMLPreInitializationEvent event) {
+        INSTANCE = this;
+    }
+
+    @Mod.EventHandler
+    public void init(FMLInitializationEvent event) {
+        net.minecraftforge.fml.client.registry.ClientRegistry.registerKeyBinding(clickGuiKey);
+        MinecraftForge.EVENT_BUS.register(this);
+        moduleManager = new ModuleManager();
+        clickGui = new ClickGUI();
+        commandManager = new CommandManager();
+        configManager = new ConfigManager();
+        configManager.load(moduleManager);
+    }
+
+    public static void scheduleSave() {
+        if (INSTANCE != null) INSTANCE.saveConfig();
+    }
+
+    public void saveConfig() {
+        if (configManager != null && moduleManager != null) {
+            configManager.save(moduleManager);
+        }
+    }
+
+    public void closeGui() {
+        if (mc.currentScreen != null) mc.displayGuiScreen(null);
+        saveConfig();
+    }
+
+    @SubscribeEvent
+    public void onClientTick(TickEvent.ClientTickEvent event) {
+        if (event.phase != TickEvent.Phase.END) return;
+        if (clickGuiKey.isPressed()) {
+            if (mc.currentScreen != null && mc.currentScreen instanceof ClickGUI) {
+                mc.displayGuiScreen(null);
+            } else if (mc.currentScreen == null) {
+                mc.displayGuiScreen(clickGui);
+            }
+        }
+        updateModuleKeys();
+    }
+
+    private void updateModuleKeys() {
+        boolean guiOpen = mc.currentScreen != null;
+        for (Module module : moduleManager.getModules()) {
+            int key = module.getKey();
+            boolean down = key > 0 && key < 256 && Keyboard.isKeyDown(key);
+            boolean wasDown = module.isBindDown();
+            module.setBindDown(down);
+
+            if (module.isHoldBind()) {
+                // A hold bind cannot stay on while input belongs to a screen.
+                if (guiOpen) {
+                    if (module.isEnabled()) module.setEnabled(false);
+                    continue;
+                }
+                if (down && !wasDown) module.setEnabled(true);
+                else if (!down && wasDown) module.setEnabled(false);
+                continue;
+            }
+
+            if (!guiOpen && down && !wasDown) {
+                module.toggle();
+            }
+        }
+    }
+
+    @SubscribeEvent
+    public void onRender(RenderGameOverlayEvent event) {
+        if (event.type != RenderGameOverlayEvent.ElementType.TEXT) return;
+
+        Module iface = moduleManager.getModule("Interface");
+        if (iface == null || !iface.isEnabled()) return;
+        Interface hud = (Interface) iface;
+
+        if (hud.shouldShowWatermark()) {
+            String playerName = mc.thePlayer != null ? mc.thePlayer.getName() : mc.getSession().getUsername();
+            String prefix = "[";
+            String suffix = " v" + VERSION + " - " + playerName + "]";
+            int x = 2;
+            RenderUtil.drawString(prefix, x, 2, 0xFFFFFFFF);
+            x += RenderUtil.getTextWidth(prefix);
+            RenderUtil.drawString(NAME, x, 2, Theme.ACCENT);
+            x += RenderUtil.getTextWidth(NAME);
+            RenderUtil.drawString(suffix, x, 2, 0xFFFFFFFF);
+        }
+
+        if (!hud.shouldShowModuleList()) return;
+
+        ScaledResolution sr = new ScaledResolution(mc);
+        int width = sr.getScaledWidth();
+
+        List<Module> visible = new ArrayList<>(moduleManager.getEnabledModules());
+        Map<Module, String> suffixes = new HashMap<>();
+        for (Module module : visible) {
+            String tag = module.getTag();
+            suffixes.put(module, tag == null || tag.isEmpty() ? "" : " " + tag);
+        }
+        // Longest rows first so the right-aligned list has a clean left edge.
+        visible.sort((a, b) -> {
+            int widthA = RenderUtil.getTextWidth(a.getName() + suffixes.get(a));
+            int widthB = RenderUtil.getTextWidth(b.getName() + suffixes.get(b));
+            if (widthA != widthB) return Integer.compare(widthB, widthA);
+            return a.getName().compareToIgnoreCase(b.getName());
+        });
+
+        int y = 2;
+        for (Module module : visible) {
+            String suffix = suffixes.get(module);
+            int nameWidth = RenderUtil.getTextWidth(module.getName());
+            float x = width - 2 - nameWidth - RenderUtil.getTextWidth(suffix);
+            RenderUtil.drawString(module.getName(), x, y, Theme.ACCENT);
+            if (!suffix.isEmpty()) {
+                RenderUtil.drawString(suffix, x + nameWidth, y, Theme.TEXT_GRAY);
+            }
+            y += RenderUtil.getTextHeight() + 1;
+        }
+    }
+}
