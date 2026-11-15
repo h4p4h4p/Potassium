@@ -18,6 +18,7 @@ public class ModuleManager {
         modules.add(new HitSelect());
         modules.add(new Criticals());
         modules.add(new RightClicker());
+        modules.add(new FastPlace());
         modules.add(new AntiKnockback());
         modules.add(new Breaker());
         modules.add(new Esp());
