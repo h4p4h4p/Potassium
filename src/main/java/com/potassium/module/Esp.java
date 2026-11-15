@@ -2,7 +2,6 @@ package com.potassium.module;
 
 import com.potassium.settings.BooleanSetting;
 import com.potassium.settings.ColorSetting;
-import com.potassium.settings.ModeSetting;
 import com.potassium.settings.Setting;
 import com.potassium.util.RenderUtil;
 import net.minecraft.client.Minecraft;
@@ -26,11 +25,8 @@ import java.util.List;
 
 public class Esp extends Module {
 
-    public static final String MODE_2D = "2D";
-
     private static final int MAX_QUADS = 16384;
 
-    private final ModeSetting modeSetting = new ModeSetting("Mode", new String[]{MODE_2D}, ModeSetting.UNSET);
     private final BooleanSetting cornersSetting = new BooleanSetting("Corners", false);
     private final BooleanSetting namesSetting = new BooleanSetting("Names", true);
     private final BooleanSetting legitSetting = new BooleanSetting("LegitESP", false);
@@ -62,7 +58,6 @@ public class Esp extends Module {
 
     public Esp() {
         super("ESP", Category.RENDER);
-        settings.add(modeSetting);
         settings.add(cornersSetting);
         settings.add(namesSetting);
         settings.add(legitSetting);
@@ -73,13 +68,8 @@ public class Esp extends Module {
 
     @Override
     public boolean isSettingVisible(Setting setting) {
-        if (setting == cornersSetting) return MODE_2D.equals(mode());
         if (setting == nameColorSetting) return namesSetting.getValue();
         return true;
-    }
-
-    private String mode() {
-        return modeSetting.getValue();
     }
 
     public int getPreviewColor() {
@@ -105,7 +95,6 @@ public class Esp extends Module {
         quadCount = 0;
         nameCount = 0;
         if (!captureMatrices()) return;
-        if (modeSetting.isUnset()) return;
         collect2D(event.partialTicks);
     }
 
@@ -303,10 +292,5 @@ public class Esp extends Module {
     public void onDisable() {
         quadCount = 0;
         nameCount = 0;
-    }
-
-    @Override
-    public String getTag() {
-        return modeSetting.getValue();
     }
 }
