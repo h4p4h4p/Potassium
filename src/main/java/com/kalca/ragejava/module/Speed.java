@@ -15,19 +15,13 @@ public class Speed extends Module {
 
     public static final String MODE_NORMAL = "Normal";
     public static final String MODE_LEGIT_HOP = "LegitHop";
+    public static final String MODE_LOW_HOP = "LowHop";
 
-    // Old configs selected HurtBoost as mode index 2. Without this it would clamp to LegitHop.
+    // Same ground speed Normal starts from, so the default multiplier lands around 0.33.
+    private static final double LOW_HOP_BASE_SPEED = 0.28D;
+
     private final ModeSetting modeSetting = new ModeSetting("Mode",
-            new String[]{MODE_NORMAL, MODE_LEGIT_HOP}, 0) {
-        @Override
-        public void fromConfigString(String s) {
-            if ("2".equals(s.trim())) {
-                setIndex(0);
-                return;
-            }
-            super.fromConfigString(s);
-        }
-    };
+            new String[]{MODE_NORMAL, MODE_LEGIT_HOP, MODE_LOW_HOP}, 0);
     private final SliderSetting speedSetting = new SliderSetting("Speed", 1.2, 0.5, 5.0, 0.05);
     private final BooleanSetting autoJumpSetting = new BooleanSetting("Auto Jump", true);
 
@@ -36,6 +30,12 @@ public class Speed extends Module {
     // VerusHop-style speed: one acceleration on the ground, then decay in the air.
     // Re-strafing to full speed every airborne tick is what the speed checks see.
     private double airSpeed;
+
+    // LowHop: hold the horizontal speed flat through the hop and cut the jump
+    // short on the first air tick so the bounce stays near the ground.
+    private double lowHopSpeed;
+    private int lowHopAirTicks;
+    private boolean lowHopJumped;
 
     public Speed() {
         super("Speed", Category.MOVEMENT);
@@ -48,7 +48,7 @@ public class Speed extends Module {
     @Override
     public boolean isSettingVisible(Setting setting) {
         if (setting == speedSetting) return !legitHop();
-        if (setting == autoJumpSetting) return !legitHop();
+        if (setting == autoJumpSetting) return !legitHop() && !lowHop();
         return super.isSettingVisible(setting);
     }
 
@@ -58,6 +58,10 @@ public class Speed extends Module {
 
     private boolean legitHop() {
         return MODE_LEGIT_HOP.equals(mode());
+    }
+
+    private boolean lowHop() {
+        return MODE_LOW_HOP.equals(mode());
     }
 
     @SubscribeEvent
@@ -78,6 +82,28 @@ public class Speed extends Module {
         }
 
         if (!PlayerUtil.isMoving(player) || player.isSneaking()) return;
+
+        if (lowHop()) {
+            if (player.onGround) {
+                lowHopAirTicks = 0;
+                lowHopJumped = true;
+                player.jump();
+                lowHopSpeed = LOW_HOP_BASE_SPEED * speedSetting.getValue();
+            } else {
+                // Cutting the rise on the first air tick is the "low" in LowHop: the jump
+                // peaks almost immediately, so the next hop starts a few ticks after take-off.
+                if (lowHopJumped && ++lowHopAirTicks == 1) {
+                    player.motionY = -0.098D;
+                }
+                lowHopSpeed *= 0.99D;
+            }
+            // Enabling mid-air leaves the speed at zero until the first hop; strafing with it
+            // would zero the player's momentum.
+            if (lowHopSpeed > 0.0D) {
+                PlayerUtil.strafe(player, lowHopSpeed);
+            }
+            return;
+        }
 
         if (player.onGround) {
             airSpeed = 0.28D * speedSetting.getValue();
@@ -103,10 +129,16 @@ public class Speed extends Module {
     @Override
     public void onEnable() {
         airSpeed = 0.0D;
+        lowHopSpeed = 0.0D;
+        lowHopAirTicks = 0;
+        lowHopJumped = false;
     }
 
     @Override
     public void onDisable() {
         airSpeed = 0.0D;
+        lowHopSpeed = 0.0D;
+        lowHopAirTicks = 0;
+        lowHopJumped = false;
     }
 }

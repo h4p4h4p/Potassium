@@ -19,7 +19,7 @@ import java.util.Map;
 public class ConfigManager {
 
     private static final String CONFIG_VERSION_KEY = "ragejava.configVersion";
-    private static final String CONFIG_VERSION = "2";
+    private static final String CONFIG_VERSION = "3";
 
     private final File file;
 
@@ -123,6 +123,11 @@ public class ConfigManager {
                 if (name.equals("Mode") || name.equals("Speed")) continue;
                 values.put("Breaker." + name, entry.getValue());
             }
+        }
+
+        // Speed's mode slot 2 held the removed HurtBoost; LowHop was added there in v3.
+        if (configVersion < 3 && "2".equals(values.get("Speed.Mode"))) {
+            values.put("Speed.Mode", "0");
         }
 
         // Velocity's knockback multipliers used to be stored as 0..100 percentages.
