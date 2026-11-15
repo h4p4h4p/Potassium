@@ -81,10 +81,10 @@ public class Speed extends Module {
             return;
         }
 
-        if (!PlayerUtil.isMoving(player) || player.isSneaking()) return;
-
         if (lowHop()) {
+            boolean moving = PlayerUtil.isMoving(player) && !player.isSneaking();
             if (player.onGround) {
+                if (!moving) return;
                 lowHopAirTicks = 0;
                 lowHopJumped = true;
                 player.jump();
@@ -92,10 +92,13 @@ public class Speed extends Module {
             } else {
                 // Cutting the rise on the first air tick is the "low" in LowHop: the jump
                 // peaks almost immediately, so the next hop starts a few ticks after take-off.
+                // The tick counter keeps running while no key is held, so releasing them
+                // mid-jump cannot re-trigger the cut later in the same hop.
                 if (lowHopJumped && ++lowHopAirTicks == 1) {
                     player.motionY = -0.098D;
                 }
                 lowHopSpeed *= 0.99D;
+                if (!moving) return;
             }
             // Enabling mid-air leaves the speed at zero until the first hop; strafing with it
             // would zero the player's momentum.
@@ -104,6 +107,8 @@ public class Speed extends Module {
             }
             return;
         }
+
+        if (!PlayerUtil.isMoving(player) || player.isSneaking()) return;
 
         if (player.onGround) {
             airSpeed = 0.28D * speedSetting.getValue();
