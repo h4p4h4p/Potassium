@@ -7,8 +7,6 @@ import com.potassium.settings.Setting;
 import com.potassium.util.RenderUtil;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.ScaledResolution;
-import net.minecraft.client.renderer.GlStateManager;
-import net.minecraft.client.renderer.Tessellator;
 import net.minecraft.entity.Entity;
 import net.minecraft.util.AxisAlignedBB;
 import net.minecraft.util.MovingObjectPosition;
@@ -29,12 +27,10 @@ import java.util.List;
 public class Esp extends Module {
 
     public static final String MODE_2D = "2D";
-    public static final String MODE_3D = "3D";
 
-    private static final double NEAR_CAMERA_MARGIN = 1.2D;
     private static final int MAX_QUADS = 16384;
 
-    private final ModeSetting modeSetting = new ModeSetting("Mode", new String[]{MODE_2D, MODE_3D}, ModeSetting.UNSET);
+    private final ModeSetting modeSetting = new ModeSetting("Mode", new String[]{MODE_2D}, ModeSetting.UNSET);
     private final BooleanSetting cornersSetting = new BooleanSetting("Corners", false);
     private final BooleanSetting namesSetting = new BooleanSetting("Names", true);
     private final BooleanSetting legitSetting = new BooleanSetting("LegitESP", false);
@@ -86,10 +82,6 @@ public class Esp extends Module {
         return modeSetting.getValue();
     }
 
-    public String getPreviewMode() {
-        return mode();
-    }
-
     public int getPreviewColor() {
         return colorSetting.getValue();
     }
@@ -114,18 +106,14 @@ public class Esp extends Module {
         nameCount = 0;
         if (!captureMatrices()) return;
         if (modeSetting.isUnset()) return;
-        if (MODE_3D.equals(mode())) {
-            render3D(event.partialTicks);
-        } else {
-            collect2D(event.partialTicks);
-        }
+        collect2D(event.partialTicks);
     }
 
     @SubscribeEvent
     public void onOverlay(RenderGameOverlayEvent.Post event) {
         if (!isEnabled()) return;
         if (event.type != RenderGameOverlayEvent.ElementType.ALL) return;
-        if (MODE_2D.equals(mode()) && quadCount > 0) {
+        if (quadCount > 0) {
             RenderUtil.drawBatchedRects(quadBuf, quadCount, colorSetting.getValue());
         }
         if (nameCount > 0) {
@@ -184,71 +172,6 @@ public class Esp extends Module {
         nameXs[nameCount] = (float) (screenX / scale);
         nameYs[nameCount] = (float) ((vh - screenY) / scale);
         nameCount++;
-    }
-
-    private void render3D(float partialTicks) {
-        double camX = mc.getRenderManager().viewerPosX;
-        double camY = mc.getRenderManager().viewerPosY;
-        double camZ = mc.getRenderManager().viewerPosZ;
-
-        int color = colorSetting.getValue();
-        int r = (color >> 16) & 0xFF;
-        int g = (color >> 8) & 0xFF;
-        int b = color & 0xFF;
-        boolean showNames = namesSetting.getValue();
-        boolean legit = legitSetting.getValue();
-
-        GlStateManager.disableTexture2D();
-        GlStateManager.enableBlend();
-        GlStateManager.disableCull();
-        GlStateManager.tryBlendFuncSeparate(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA, 1, 0);
-        Tessellator tessellator = Tessellator.getInstance();
-        List<net.minecraft.entity.player.EntityPlayer> players = mc.theWorld.playerEntities;
-        for (int i = 0; i < players.size(); i++) {
-            Entity entity = players.get(i);
-            if (entity == mc.thePlayer) continue;
-
-            // Use original entity width/height instead of modified bounding box
-            double width = entity.width;
-            double height = entity.height;
-            double halfW = width * 0.5;
-
-            if (RenderUtil.pointNearBox(camX, camY, camZ, entity.getEntityBoundingBox(), NEAR_CAMERA_MARGIN)) continue;
-
-            if (legit && !isEntityVisible(entity, camX, camY, camZ)) continue;
-
-            double ox = entity.lastTickPosX + (entity.posX - entity.lastTickPosX) * partialTicks - entity.posX;
-            double oy = entity.lastTickPosY + (entity.posY - entity.lastTickPosY) * partialTicks - entity.posY;
-            double oz = entity.lastTickPosZ + (entity.posZ - entity.lastTickPosZ) * partialTicks - entity.posZ;
-
-            double cx = entity.posX + ox;
-            double cz = entity.posZ + oz;
-
-            double minX = cx - halfW - camX;
-            double minY = entity.posY + oy - camY;
-            double minZ = entity.posZ + oz - halfW - camZ;
-            double maxX = cx + halfW - camX;
-            double maxY = entity.posY + oy + entity.height - camY;
-            double maxZ = entity.posZ + oz + halfW - camZ;
-
-            // Filled box (semi-transparent)
-            int fillAlpha = 100;
-            RenderUtil.drawFilledBox(tessellator, minX, minY, minZ, maxX, maxY, maxZ, r, g, b, fillAlpha);
-
-            // Name above box
-            if (namesSetting.getValue()) {
-                double midX = (cx - halfW + cx + halfW) * 0.5;
-                double midZ = (entity.posZ + oz - halfW + entity.posZ + oz + halfW) * 0.5;
-                double maxYScreen = entity.posY + oy + entity.height + 0.3 - camY;
-                if (project(midX - camX, maxYScreen + 0.3, midZ - camZ, feetScratch)) {
-                    storeName(entity.getName(), feetScratch[0], feetScratch[1]);
-                }
-            }
-        }
-
-        GlStateManager.enableCull();
-        GlStateManager.disableBlend();
-        GlStateManager.enableTexture2D();
     }
 
     private void collect2D(float partialTicks) {

@@ -13,9 +13,7 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.entity.EntityOtherPlayerMP;
 import net.minecraft.client.renderer.GlStateManager;
 import net.minecraft.client.renderer.RenderHelper;
-import net.minecraft.client.renderer.Tessellator;
 import net.minecraft.client.renderer.entity.RenderManager;
-import net.minecraft.util.AxisAlignedBB;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.lwjgl.opengl.GL11;
@@ -195,10 +193,6 @@ public class ModuleButton {
         if (player == null) return;
 
         int color = esp.getPreviewColor();
-        int r = (color >> 16) & 0xFF;
-        int g = (color >> 8) & 0xFF;
-        int b = color & 0xFF;
-        boolean draw3D = Esp.MODE_3D.equals(esp.getPreviewMode());
 
         logPreviewLayout(px, pw, x, width);
 
@@ -221,15 +215,6 @@ public class ModuleButton {
         mc.getRenderManager().renderEntityWithPosYaw(player, 0.0D, 0.0D, 0.0D, 0.0F, 1.0F);
         RenderHelper.disableStandardItemLighting();
 
-        if (draw3D) {
-            GlStateManager.disableDepth();
-            GlStateManager.disableTexture2D();
-            GlStateManager.enableBlend();
-            GlStateManager.tryBlendFuncSeparate(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA, 1, 0);
-            AxisAlignedBB box = AxisAlignedBB.fromBounds(-0.1D, -0.1D, -0.1D, 0.7D, 1.9D, 0.7D);
-            RenderUtil.drawFilledBox(Tessellator.getInstance(), box.minX, box.minY, box.minZ, box.maxX, box.maxY, box.maxZ, r, g, b, 100);
-            GlStateManager.enableTexture2D();
-        }
         GlStateManager.popMatrix();
         GlStateManager.disableRescaleNormal();
         GlStateManager.disableColorMaterial();
@@ -240,26 +225,24 @@ public class ModuleButton {
             GlStateManager.disableDepth();
         }
 
-        if (!draw3D) {
-            float h = bottom - top;
-            float w = h * 0.5f;
-            float xr = cx - w / 2f;
-            float len = Math.max(4f, Math.min(h / 6f, 10f));
-            if (esp.getPreviewCorners()) {
-                RenderUtil.drawRect(xr, top, len, 1, color);
-                RenderUtil.drawRect(xr, top, 1, len, color);
-                RenderUtil.drawRect(xr + w - len, top, len, 1, color);
-                RenderUtil.drawRect(xr + w - 1, top, 1, len, color);
-                RenderUtil.drawRect(xr, top + h - 1, len, 1, color);
-                RenderUtil.drawRect(xr, top + h - len, 1, len, color);
-                RenderUtil.drawRect(xr + w - len, top + h - 1, len, 1, color);
-                RenderUtil.drawRect(xr + w - 1, top + h - len, 1, len, color);
-            } else {
-                RenderUtil.drawRect(xr, top, w, 1, color);
-                RenderUtil.drawRect(xr, top + h - 1, w, 1, color);
-                RenderUtil.drawRect(xr, top, 1, h, color);
-                RenderUtil.drawRect(xr + w - 1, top, 1, h, color);
-            }
+        float h = bottom - top;
+        float w = h * 0.5f;
+        float xr = cx - w / 2f;
+        float len = Math.max(4f, Math.min(h / 6f, 10f));
+        if (esp.getPreviewCorners()) {
+            RenderUtil.drawRect(xr, top, len, 1, color);
+            RenderUtil.drawRect(xr, top, 1, len, color);
+            RenderUtil.drawRect(xr + w - len, top, len, 1, color);
+            RenderUtil.drawRect(xr + w - 1, top, 1, len, color);
+            RenderUtil.drawRect(xr, top + h - 1, len, 1, color);
+            RenderUtil.drawRect(xr, top + h - len, 1, len, color);
+            RenderUtil.drawRect(xr + w - len, top + h - 1, len, 1, color);
+            RenderUtil.drawRect(xr + w - 1, top + h - len, 1, len, color);
+        } else {
+            RenderUtil.drawRect(xr, top, w, 1, color);
+            RenderUtil.drawRect(xr, top + h - 1, w, 1, color);
+            RenderUtil.drawRect(xr, top, 1, h, color);
+            RenderUtil.drawRect(xr + w - 1, top, 1, h, color);
         }
         if (esp.getPreviewNames()) {
             String name = "[Steve]";
