@@ -16,19 +16,15 @@ public class ModuleManager {
         modules.add(new LeftClicker());
         modules.add(new AimAssist());
         modules.add(new HitSelect());
-        modules.add(new Backtrack());
         modules.add(new RightClicker());
         modules.add(new Velocity());
         modules.add(new Breaker());
         modules.add(new Esp());
         modules.add(new StorageESP());
         modules.add(new Fullbright());
-        modules.add(new NoHurtCam());
         modules.add(new NoFOV());
         modules.add(new Interface());
         modules.add(new ClientSpoofer());
-        modules.add(new NameHider());
-        modules.add(new Jetpack());
         modules.add(new Flight());
     }
 
