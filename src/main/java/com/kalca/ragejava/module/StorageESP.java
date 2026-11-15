@@ -1,7 +1,6 @@
 package com.kalca.ragejava.module;
 
 import com.kalca.ragejava.settings.BooleanSetting;
-import com.kalca.ragejava.settings.ColorSetting;
 import com.kalca.ragejava.settings.ModeSetting;
 import com.kalca.ragejava.settings.Setting;
 import com.kalca.ragejava.util.RenderUtil;
@@ -41,13 +40,14 @@ public class StorageESP extends Module {
     public static final String MODE_3D = "3D";
 
     private static final double NEAR_CAMERA_MARGIN = 0.2D;
-    private static final int MAX_QUADS = 16384;
     private static final int FILL_ALPHA = 100;
+    /** Normal chests, including merged double chests. */
+    private static final int CHEST_COLOR = 0xFFFF8C00;
+    private static final int ENDER_CHEST_COLOR = 0xFF9B30FF;
 
     private final ModeSetting modeSetting = new ModeSetting("Mode", new String[]{MODE_2D, MODE_3D}, 1);
     private final BooleanSetting cornersSetting = new BooleanSetting("Corners", false);
     private final BooleanSetting throughWallsSetting = new BooleanSetting("Through Walls", true);
-    private final ColorSetting colorSetting = new ColorSetting("Color", 0xFFFF5555);
 
     private final Minecraft mc = Minecraft.getMinecraft();
 
@@ -63,20 +63,19 @@ public class StorageESP extends Module {
     private int lastDisplayWidth = -1;
     private int lastDisplayHeight = -1;
 
-    private float[] quadBuf = new float[512];
-    private int quadCount;
+    private final RectBatch chestBatch = new RectBatch();
+    private final RectBatch enderBatch = new RectBatch();
 
     private final Map<BlockPos, TileEntity> storages = new HashMap<BlockPos, TileEntity>();
     private final Set<BlockPos> visited = new HashSet<BlockPos>();
     private final Deque<BlockPos> queue = new ArrayDeque<BlockPos>();
-    private final List<AxisAlignedBB> boxes = new ArrayList<AxisAlignedBB>();
+    private final List<StorageBox> boxes = new ArrayList<StorageBox>();
 
     public StorageESP() {
         super("StorageESP", Category.RENDER);
         settings.add(modeSetting);
         settings.add(cornersSetting);
         settings.add(throughWallsSetting);
-        settings.add(colorSetting);
         MinecraftForge.EVENT_BUS.register(this);
     }
 
@@ -96,7 +95,8 @@ public class StorageESP extends Module {
         if (!isEnabled()) return;
         if (mc.thePlayer == null || mc.theWorld == null) return;
 
-        quadCount = 0;
+        chestBatch.reset();
+        enderBatch.reset();
         if (modeSetting.isUnset()) return;
         if (!captureMatrices()) return;
 
@@ -114,9 +114,9 @@ public class StorageESP extends Module {
     public void onOverlay(RenderGameOverlayEvent.Post event) {
         if (!isEnabled()) return;
         if (event.type != RenderGameOverlayEvent.ElementType.ALL) return;
-        int color = colorSetting.getValue();
-        if (MODE_2D.equals(mode()) && quadCount > 0) {
-            RenderUtil.drawBatchedRects(quadBuf, quadCount, color);
+        if (MODE_2D.equals(mode())) {
+            chestBatch.draw(CHEST_COLOR);
+            enderBatch.draw(ENDER_CHEST_COLOR);
         }
     }
 
@@ -142,7 +142,7 @@ public class StorageESP extends Module {
 
             if (entity instanceof TileEntityEnderChest) {
                 visited.add(pos);
-                boxes.add(blockBox(pos));
+                boxes.add(new StorageBox(blockBox(pos), true));
                 continue;
             }
 
@@ -169,7 +169,7 @@ public class StorageESP extends Module {
                 }
             }
 
-            boxes.add(box);
+            boxes.add(new StorageBox(box, false));
         }
     }
 
@@ -184,10 +184,6 @@ public class StorageESP extends Module {
         double camY = mc.getRenderManager().viewerPosY;
         double camZ = mc.getRenderManager().viewerPosZ;
 
-        int color = colorSetting.getValue();
-        int r = (color >> 16) & 0xFF;
-        int g = (color >> 8) & 0xFF;
-        int b = color & 0xFF;
 
         GlStateManager.disableTexture2D();
         GlStateManager.enableBlend();
@@ -197,13 +193,15 @@ public class StorageESP extends Module {
 
         Tessellator tessellator = Tessellator.getInstance();
         for (int i = 0; i < boxes.size(); i++) {
-            AxisAlignedBB box = boxes.get(i);
+            StorageBox storage = boxes.get(i);
+            AxisAlignedBB box = storage.box;
             if (RenderUtil.pointNearBox(camX, camY, camZ, box, NEAR_CAMERA_MARGIN)) continue;
 
+            int color = storage.color();
             RenderUtil.drawFilledBox(tessellator,
                     box.minX - camX, box.minY - camY, box.minZ - camZ,
                     box.maxX - camX, box.maxY - camY, box.maxZ - camZ,
-                    r, g, b, FILL_ALPHA);
+                    (color >> 16) & 0xFF, (color >> 8) & 0xFF, color & 0xFF, FILL_ALPHA);
         }
 
         if (throughWallsSetting.getValue()) GlStateManager.enableDepth();
@@ -218,7 +216,8 @@ public class StorageESP extends Module {
         double camZ = mc.getRenderManager().viewerPosZ;
 
         for (int i = 0; i < boxes.size(); i++) {
-            AxisAlignedBB box = boxes.get(i);
+            StorageBox storage = boxes.get(i);
+            AxisAlignedBB box = storage.box;
             double minX = Double.MAX_VALUE;
             double minY = Double.MAX_VALUE;
             double maxX = -Double.MAX_VALUE;
@@ -246,7 +245,7 @@ public class StorageESP extends Module {
             float h = (float) ((topDownBottom - topDownTop) / scale);
             if (w < 1.5f || h < 1.5f) continue;
 
-            addRect(x, y, w, h);
+            addRect(storage.ender ? enderBatch : chestBatch, x, y, w, h);
         }
     }
 
@@ -299,42 +298,77 @@ public class StorageESP extends Module {
         return true;
     }
 
-    private void addRect(float x, float y, float w, float h) {
-        if (!ensureQuadRoom(8)) return;
+    private void addRect(RectBatch batch, float x, float y, float w, float h) {
         if (cornersSetting.getValue()) {
+            if (!batch.ensureRoom(8)) return;
             float len = Math.max(4f, Math.min(h / 6f, 10f));
-            addQuad(x, y, len, 1f);
-            addQuad(x, y, 1f, len);
-            addQuad(x + w - len, y, len, 1f);
-            addQuad(x + w - 1f, y, 1f, len);
-            addQuad(x, y + h - 1f, len, 1f);
-            addQuad(x, y + h - len, 1f, len);
-            addQuad(x + w - len, y + h - 1f, len, 1f);
-            addQuad(x + w - 1f, y + h - len, 1f, len);
+            batch.add(x, y, len, 1f);
+            batch.add(x, y, 1f, len);
+            batch.add(x + w - len, y, len, 1f);
+            batch.add(x + w - 1f, y, 1f, len);
+            batch.add(x, y + h - 1f, len, 1f);
+            batch.add(x, y + h - len, 1f, len);
+            batch.add(x + w - len, y + h - 1f, len, 1f);
+            batch.add(x + w - 1f, y + h - len, 1f, len);
         } else {
-            addQuad(x, y, w, 1f);
-            addQuad(x, y + h - 1f, w, 1f);
-            addQuad(x, y, 1f, h);
-            addQuad(x + w - 1f, y, 1f, h);
+            if (!batch.ensureRoom(4)) return;
+            batch.add(x, y, w, 1f);
+            batch.add(x, y + h - 1f, w, 1f);
+            batch.add(x, y, 1f, h);
+            batch.add(x + w - 1f, y, 1f, h);
         }
     }
 
-    private boolean ensureQuadRoom(int quads) {
-        if ((quadCount + quads) * 4 > quadBuf.length) {
-            int needed = (quadCount + quads) * 4;
-            if (needed > MAX_QUADS * 4) return false;
-            quadBuf = Arrays.copyOf(quadBuf, Math.max(needed, quadBuf.length * 2));
+    /** A storage box plus the color its type uses. */
+    private static final class StorageBox {
+        final AxisAlignedBB box;
+        final boolean ender;
+
+        StorageBox(AxisAlignedBB box, boolean ender) {
+            this.box = box;
+            this.ender = ender;
         }
-        return true;
+
+        int color() {
+            return ender ? ENDER_CHEST_COLOR : CHEST_COLOR;
+        }
     }
 
-    private void addQuad(float x, float y, float w, float h) {
-        int offset = quadCount << 2;
-        quadBuf[offset] = x;
-        quadBuf[offset + 1] = y;
-        quadBuf[offset + 2] = w;
-        quadBuf[offset + 3] = h;
-        quadCount++;
+    /**
+     * One color's worth of 2D rectangles, kept in a growable float array so a frame's overlay can
+     * be drawn with a single batched call. Each rect is four floats: x, y, width, height.
+     */
+    private static final class RectBatch {
+        private static final int MAX_QUADS = 16384;
+
+        private float[] quads = new float[512];
+        private int count;
+
+        void reset() {
+            count = 0;
+        }
+
+        boolean ensureRoom(int quadsToAdd) {
+            if ((count + quadsToAdd) * 4 > quads.length) {
+                int needed = (count + quadsToAdd) * 4;
+                if (needed > MAX_QUADS * 4) return false;
+                quads = Arrays.copyOf(quads, Math.max(needed, quads.length * 2));
+            }
+            return true;
+        }
+
+        void add(float x, float y, float w, float h) {
+            int offset = count << 2;
+            quads[offset] = x;
+            quads[offset + 1] = y;
+            quads[offset + 2] = w;
+            quads[offset + 3] = h;
+            count++;
+        }
+
+        void draw(int color) {
+            if (count > 0) RenderUtil.drawBatchedRects(quads, count, color);
+        }
     }
 
     @Override
@@ -343,7 +377,8 @@ public class StorageESP extends Module {
 
     @Override
     public void onDisable() {
-        quadCount = 0;
+        chestBatch.reset();
+        enderBatch.reset();
         boxes.clear();
     }
 
