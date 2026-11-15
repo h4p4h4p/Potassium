@@ -7,6 +7,7 @@ import com.kalca.ragejava.settings.SliderSetting;
 import com.kalca.ragejava.util.PlayerUtil;
 import net.minecraft.client.Minecraft;
 import net.minecraft.entity.player.EntityPlayer;
+import net.minecraft.util.AxisAlignedBB;
 import net.minecraftforge.common.MinecraftForge;
 import net.minecraftforge.fml.common.eventhandler.SubscribeEvent;
 import net.minecraftforge.fml.common.gameevent.TickEvent;
@@ -24,6 +25,7 @@ public class Speed extends Module {
             new String[]{MODE_NORMAL, MODE_LEGIT_HOP, MODE_LOW_HOP}, 0);
     private final SliderSetting speedSetting = new SliderSetting("Speed", 1.2, 0.5, 5.0, 0.05);
     private final BooleanSetting autoJumpSetting = new BooleanSetting("Auto Jump", true);
+    private final BooleanSetting glideSetting = new BooleanSetting("Glide", false);
 
     private final Minecraft mc = Minecraft.getMinecraft();
 
@@ -42,6 +44,7 @@ public class Speed extends Module {
         settings.add(modeSetting);
         settings.add(speedSetting);
         settings.add(autoJumpSetting);
+        settings.add(glideSetting);
         MinecraftForge.EVENT_BUS.register(this);
     }
 
@@ -49,6 +52,7 @@ public class Speed extends Module {
     public boolean isSettingVisible(Setting setting) {
         if (setting == speedSetting) return !legitHop();
         if (setting == autoJumpSetting) return !legitHop() && !lowHop();
+        if (setting == glideSetting) return lowHop();
         return super.isSettingVisible(setting);
     }
 
@@ -97,7 +101,15 @@ public class Speed extends Module {
                 if (lowHopJumped && ++lowHopAirTicks == 1) {
                     player.motionY = -0.098D;
                 }
-                lowHopSpeed *= 0.99D;
+                if (isGroundExempt(player)) {
+                    // Ground exemption: while skimming the floor the anti-cheat treats the
+                    // movement as grounded, so hold the air speed instead of bleeding it off.
+                    if (glideSetting.getValue()) {
+                        player.motionY = 0.0D;
+                    }
+                } else {
+                    lowHopSpeed *= 0.99D;
+                }
                 if (!moving) return;
             }
             // Enabling mid-air leaves the speed at zero until the first hop; strafing with it
@@ -122,6 +134,13 @@ public class Speed extends Module {
         if (airSpeed > 0.0D) {
             PlayerUtil.strafe(player, airSpeed);
         }
+    }
+
+    /** True while descending with a block within 0.66 blocks below the player. */
+    private boolean isGroundExempt(EntityPlayer player) {
+        if (player.motionY >= 0.0D) return false;
+        AxisAlignedBB below = player.getEntityBoundingBox().offset(0.0D, -0.66D, 0.0D);
+        return !mc.theWorld.getCollidingBoundingBoxes(player, below).isEmpty();
     }
 
     @Override
