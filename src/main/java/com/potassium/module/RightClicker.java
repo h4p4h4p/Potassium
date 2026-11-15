@@ -1,6 +1,7 @@
 package com.potassium.module;
 
 import com.potassium.settings.SliderSetting;
+import com.potassium.util.ClickState;
 import net.minecraft.client.Minecraft;
 import net.minecraft.util.MovingObjectPosition;
 import net.minecraft.item.ItemStack;
@@ -39,6 +40,7 @@ public class RightClicker extends Module {
 
         boolean down = Mouse.isButtonDown(1);
         long now = System.currentTimeMillis();
+        int tick = mc.thePlayer.ticksExisted;
 
         if (down && !wasDown) {
             pressTime = now;
@@ -55,7 +57,9 @@ public class RightClicker extends Module {
         if (now - pressTime < delay) return;
         double interval = nextInterval();
         if (lastClick == 0 || now - lastClick >= interval) {
+            if (!ClickState.canUse(tick)) return;
             rightClick();
+            ClickState.markUse(tick);
             lastClick = now;
         }
     }

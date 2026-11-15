@@ -3,6 +3,7 @@ package com.potassium.module;
 import com.potassium.settings.BooleanSetting;
 import com.potassium.settings.ModeSetting;
 import com.potassium.settings.SliderSetting;
+import com.potassium.util.ClickState;
 import net.minecraft.client.Minecraft;
 import net.minecraft.entity.Entity;
 import net.minecraft.item.Item;
@@ -42,6 +43,7 @@ public class LeftClicker extends Module {
     private boolean wasDown;
     private long pressTime;
     private int lastAttackTick = -1;
+    private int resumeBlockTick = -1;
     private double clickBudget = 1.0;
 
     public LeftClicker() {
@@ -73,6 +75,7 @@ public class LeftClicker extends Module {
         boolean down = Mouse.isButtonDown(0);
         boolean rightDown = Mouse.isButtonDown(1);
         long now = System.currentTimeMillis();
+        int tick = mc.thePlayer.ticksExisted;
 
         if (down && !wasDown) {
             pressTime = now;
@@ -80,6 +83,20 @@ public class LeftClicker extends Module {
             clickBudget = 1.0;
         }
         wasDown = down;
+
+        if (resumeBlockTick >= 0) {
+            if (resumeBlockTick == tick) {
+                resumeBlockTick = -1;
+                ItemStack held = mc.thePlayer.getHeldItem();
+                if (blockHit && rightDown && held != null && mc.playerController != null
+                        && !mc.thePlayer.isUsingItem() && ClickState.canUse(tick)) {
+                    mc.playerController.sendUseItem(mc.thePlayer, mc.theWorld, held);
+                    ClickState.markUse(tick);
+                }
+            } else if (resumeBlockTick < tick) {
+                resumeBlockTick = -1;
+            }
+        }
 
         if (!down) {
             reset();
@@ -92,31 +109,33 @@ public class LeftClicker extends Module {
                 return;
             }
             if (mc.thePlayer.isUsingItem()) {
-                lastAttackTick = mc.thePlayer.ticksExisted;
+                lastAttackTick = tick;
                 return;
             }
 
             if (now - pressTime < (long) delaySetting.getValue()) return;
-            if (mc.thePlayer.ticksExisted == lastAttackTick) return;
+            if (tick == lastAttackTick) return;
+            if (!ClickState.canAttack(tick)) return;
 
             if (clickDue()) {
                 blockHitClick();
-                lastAttackTick = mc.thePlayer.ticksExisted;
+                lastAttackTick = tick;
             }
             return;
         }
 
         if (mc.thePlayer.isUsingItem()) {
-            lastAttackTick = mc.thePlayer.ticksExisted;
+            lastAttackTick = tick;
             return;
         }
 
         if (now - pressTime < (long) delaySetting.getValue()) return;
-        if (mc.thePlayer.ticksExisted == lastAttackTick) return;
+        if (tick == lastAttackTick) return;
+        if (!ClickState.canAttack(tick)) return;
 
         if (clickDue()) {
             click();
-            lastAttackTick = mc.thePlayer.ticksExisted;
+            lastAttackTick = tick;
         }
     }
 
@@ -140,6 +159,7 @@ public class LeftClicker extends Module {
         if (mc.playerController == null || mc.getNetHandler() == null) return;
         if (mc.objectMouseOver == null || mc.objectMouseOver.entityHit == null) return;
 
+        int tick = mc.thePlayer.ticksExisted;
         mc.thePlayer.stopUsingItem();
         mc.playerController.onStoppedUsingItem(mc.thePlayer);
 
@@ -147,11 +167,11 @@ public class LeftClicker extends Module {
         if (over != null && over.typeOfHit == MovingObjectPosition.MovingObjectType.ENTITY && over.entityHit != null) {
             mc.thePlayer.swingItem();
             mc.playerController.attackEntity(mc.thePlayer, over.entityHit);
+            ClickState.markAttack(tick);
         }
 
-        if (mc.thePlayer.getHeldItem() != null) {
-            mc.playerController.sendUseItem(mc.thePlayer, mc.theWorld, mc.thePlayer.getHeldItem());
-        }
+        // Re-block on the next tick instead of sending use and attack together.
+        resumeBlockTick = tick + 1;
     }
 
     private double jitterFactor() {
@@ -174,14 +194,17 @@ public class LeftClicker extends Module {
             clickEntityOnly();
             return;
         }
+        int tick = mc.thePlayer.ticksExisted;
         MovingObjectPosition over = mc.objectMouseOver;
         if (over != null && over.typeOfHit == MovingObjectPosition.MovingObjectType.ENTITY && over.entityHit != null) {
             mc.thePlayer.swingItem();
             mc.playerController.attackEntity(mc.thePlayer, over.entityHit);
+            ClickState.markAttack(tick);
         } else {
             mc.thePlayer.swingItem();
             if (over != null && over.typeOfHit == MovingObjectPosition.MovingObjectType.BLOCK) {
                 mc.playerController.onPlayerDamageBlock(over.getBlockPos(), over.sideHit);
+                ClickState.markAttack(tick);
             }
         }
     }
@@ -194,6 +217,7 @@ public class LeftClicker extends Module {
         if (target == null) return;
         mc.thePlayer.swingItem();
         mc.playerController.attackEntity(mc.thePlayer, target);
+        ClickState.markAttack(mc.thePlayer.ticksExisted);
     }
 
     private void reset() {
@@ -210,11 +234,13 @@ public class LeftClicker extends Module {
 
     @Override
     public void onEnable() {
+        resumeBlockTick = -1;
         reset();
     }
 
     @Override
     public void onDisable() {
+        resumeBlockTick = -1;
         reset();
     }
 }
