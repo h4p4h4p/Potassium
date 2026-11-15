@@ -46,7 +46,6 @@ public class StorageESP extends Module {
 
     private final ModeSetting modeSetting = new ModeSetting("Mode", new String[]{MODE_2D, MODE_3D}, 1);
     private final BooleanSetting cornersSetting = new BooleanSetting("Corners", false);
-    private final BooleanSetting labelsSetting = new BooleanSetting("Labels", true);
     private final BooleanSetting throughWallsSetting = new BooleanSetting("Through Walls", true);
     private final ColorSetting colorSetting = new ColorSetting("Color", 0xFFFF5555);
 
@@ -67,22 +66,15 @@ public class StorageESP extends Module {
     private float[] quadBuf = new float[512];
     private int quadCount;
 
-    private String[] labelTexts = new String[32];
-    private float[] labelXs = new float[32];
-    private float[] labelYs = new float[32];
-    private int labelCount;
-
     private final Map<BlockPos, TileEntity> storages = new HashMap<BlockPos, TileEntity>();
     private final Set<BlockPos> visited = new HashSet<BlockPos>();
     private final Deque<BlockPos> queue = new ArrayDeque<BlockPos>();
     private final List<AxisAlignedBB> boxes = new ArrayList<AxisAlignedBB>();
-    private final List<String> boxLabels = new ArrayList<String>();
 
     public StorageESP() {
         super("StorageESP", Category.RENDER);
         settings.add(modeSetting);
         settings.add(cornersSetting);
-        settings.add(labelsSetting);
         settings.add(throughWallsSetting);
         settings.add(colorSetting);
         MinecraftForge.EVENT_BUS.register(this);
@@ -105,7 +97,6 @@ public class StorageESP extends Module {
         if (mc.thePlayer == null || mc.theWorld == null) return;
 
         quadCount = 0;
-        labelCount = 0;
         if (modeSetting.isUnset()) return;
         if (!captureMatrices()) return;
 
@@ -127,12 +118,6 @@ public class StorageESP extends Module {
         if (MODE_2D.equals(mode()) && quadCount > 0) {
             RenderUtil.drawBatchedRects(quadBuf, quadCount, color);
         }
-        if (labelCount > 0) {
-            for (int i = 0; i < labelCount; i++) {
-                String text = labelTexts[i];
-                RenderUtil.drawString(text, labelXs[i] - RenderUtil.getTextWidth(text) * 0.5f, labelYs[i] - 9f, color);
-            }
-        }
     }
 
     /**
@@ -144,7 +129,6 @@ public class StorageESP extends Module {
         storages.clear();
         visited.clear();
         boxes.clear();
-        boxLabels.clear();
 
         for (TileEntity entity : mc.theWorld.loadedTileEntityList) {
             if (entity instanceof TileEntityChest || entity instanceof TileEntityEnderChest) {
@@ -159,14 +143,12 @@ public class StorageESP extends Module {
             if (entity instanceof TileEntityEnderChest) {
                 visited.add(pos);
                 boxes.add(blockBox(pos));
-                boxLabels.add("Ender Chest");
                 continue;
             }
 
             Block block = mc.theWorld.getBlockState(pos).getBlock();
             if (!(block instanceof BlockChest)) continue;
             AxisAlignedBB box = blockBox(pos);
-            int count = 1;
 
             visited.add(pos);
             queue.clear();
@@ -183,13 +165,11 @@ public class StorageESP extends Module {
                     if (mc.theWorld.getBlockState(neighbour).getBlock() != block) continue;
                     visited.add(neighbour);
                     box = box.union(blockBox(neighbour));
-                    count++;
                     queue.add(neighbour);
                 }
             }
 
             boxes.add(box);
-            boxLabels.add(count > 1 ? "Double Chest" : "Chest");
         }
     }
 
@@ -208,7 +188,6 @@ public class StorageESP extends Module {
         int r = (color >> 16) & 0xFF;
         int g = (color >> 8) & 0xFF;
         int b = color & 0xFF;
-        boolean labels = labelsSetting.getValue();
 
         GlStateManager.disableTexture2D();
         GlStateManager.enableBlend();
@@ -225,14 +204,6 @@ public class StorageESP extends Module {
                     box.minX - camX, box.minY - camY, box.minZ - camZ,
                     box.maxX - camX, box.maxY - camY, box.maxZ - camZ,
                     r, g, b, FILL_ALPHA);
-
-            if (!labels) continue;
-            double midX = (box.minX + box.maxX) * 0.5D - camX;
-            double midZ = (box.minZ + box.maxZ) * 0.5D - camZ;
-            double topY = box.maxY + 0.3D - camY;
-            if (project(midX, topY, midZ, cornerScratch)) {
-                storeLabel(boxLabels.get(i), cornerScratch[0], cornerScratch[1]);
-            }
         }
 
         if (throughWallsSetting.getValue()) GlStateManager.enableDepth();
@@ -245,7 +216,6 @@ public class StorageESP extends Module {
         double camX = mc.getRenderManager().viewerPosX;
         double camY = mc.getRenderManager().viewerPosY;
         double camZ = mc.getRenderManager().viewerPosZ;
-        boolean labels = labelsSetting.getValue();
 
         for (int i = 0; i < boxes.size(); i++) {
             AxisAlignedBB box = boxes.get(i);
@@ -277,27 +247,7 @@ public class StorageESP extends Module {
             if (w < 1.5f || h < 1.5f) continue;
 
             addRect(x, y, w, h);
-
-            if (!labels) continue;
-            double midX = (box.minX + box.maxX) * 0.5D - camX;
-            double midZ = (box.minZ + box.maxZ) * 0.5D - camZ;
-            double topY = box.maxY + 0.3D - camY;
-            if (project(midX, topY, midZ, cornerScratch)) {
-                storeLabel(boxLabels.get(i), cornerScratch[0], cornerScratch[1]);
-            }
         }
-    }
-
-    private void storeLabel(String text, double screenX, double screenY) {
-        if (labelCount == labelTexts.length) {
-            labelTexts = Arrays.copyOf(labelTexts, labelCount * 2);
-            labelXs = Arrays.copyOf(labelXs, labelCount * 2);
-            labelYs = Arrays.copyOf(labelYs, labelCount * 2);
-        }
-        labelTexts[labelCount] = "[" + text + "]";
-        labelXs[labelCount] = (float) (screenX / scale);
-        labelYs[labelCount] = (float) ((vh - screenY) / scale);
-        labelCount++;
     }
 
     private boolean captureMatrices() {
@@ -324,14 +274,6 @@ public class StorageESP extends Module {
             scale = vh / (double) new ScaledResolution(mc).getScaledHeight();
         }
         return scale > 0;
-    }
-
-    /** Projection for labels: rejects points behind or well outside the screen. */
-    private boolean project(double x, double y, double z, double[] out) {
-        if (!projectCorner(x, y, z, out)) return false;
-        double ndcX = (out[0] / vw) * 2.0D - 1.0D;
-        double ndcY = (out[1] / vh) * 2.0D - 1.0D;
-        return ndcX >= -1.1D && ndcX <= 1.1D && ndcY >= -1.1D && ndcY <= 1.1D;
     }
 
     /** Projection for box corners: only needs to be in front of the camera. */
@@ -402,9 +344,7 @@ public class StorageESP extends Module {
     @Override
     public void onDisable() {
         quadCount = 0;
-        labelCount = 0;
         boxes.clear();
-        boxLabels.clear();
     }
 
     @Override
