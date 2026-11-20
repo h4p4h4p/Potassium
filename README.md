@@ -2,5 +2,5 @@
 
 Really basic hvh client, bypasses SOME servers, currently supports:
 
-Vanilla (duh)
+Vanilla (duh),
 NCP
