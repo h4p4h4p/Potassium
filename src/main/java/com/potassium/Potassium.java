@@ -19,6 +19,7 @@ import net.minecraftforge.fml.common.event.FMLPreInitializationEvent;
 import net.minecraftforge.fml.common.eventhandler.SubscribeEvent;
 import net.minecraftforge.fml.common.gameevent.TickEvent;
 import org.lwjgl.input.Keyboard;
+import org.lwjgl.opengl.Display;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -30,7 +31,8 @@ public class Potassium {
 
     public static final String MODID = "potassium";
     public static final String NAME = "Potassium";
-    public static final String VERSION = "0.3";
+    public static final String VERSION = "ItsEverydayBro";
+    private static final String WINDOW_TITLE = "Potassium version-" + VERSION;
 
     public static Potassium INSTANCE;
 
@@ -57,6 +59,7 @@ public class Potassium {
         commandManager = new CommandManager();
         configManager = new ConfigManager();
         configManager.load(moduleManager);
+        updateWindowTitle();
     }
 
     public static void scheduleSave() {
@@ -74,9 +77,15 @@ public class Potassium {
         saveConfig();
     }
 
+    private static void updateWindowTitle() {
+        if (!Display.isCreated() || WINDOW_TITLE.equals(Display.getTitle())) return;
+        Display.setTitle(WINDOW_TITLE);
+    }
+
     @SubscribeEvent
     public void onClientTick(TickEvent.ClientTickEvent event) {
         if (event.phase != TickEvent.Phase.END) return;
+        updateWindowTitle();
         if (clickGuiKey.isPressed()) {
             if (mc.currentScreen != null && mc.currentScreen instanceof ClickGUI) {
                 mc.displayGuiScreen(null);
@@ -96,13 +105,9 @@ public class Potassium {
             module.setBindDown(down);
 
             if (module.isHoldBind()) {
-                // A hold bind cannot stay on while input belongs to a screen.
-                if (guiOpen) {
-                    if (module.isEnabled()) module.setEnabled(false);
-                    continue;
-                }
-                if (down && !wasDown) module.setEnabled(true);
-                else if (!down && wasDown) module.setEnabled(false);
+                // Hold binds follow the key exactly, including when the GUI has focus.
+                boolean shouldEnable = !guiOpen && down;
+                if (module.isEnabled() != shouldEnable) module.setEnabled(shouldEnable);
                 continue;
             }
 

@@ -82,9 +82,10 @@ public class ClickGUI extends GuiScreen {
         for (Panel panel : panels) {
             panel.draw(mouseX, mouseY);
         }
-        // After every panel, so an open mode list is not painted over by the settings below it.
+        // After every panel, so open dropdowns are not painted over by the settings below them.
         ModeWidget.drawOpenPopup(mouseX, mouseY, sr.getScaledHeight() - 4f);
         searchField.draw(mouseX, mouseY);
+        SelectWidget.drawOpenPopup(mouseX, mouseY, sr.getScaledHeight() - 4f);
     }
 
     private void reflow() {
@@ -129,6 +130,7 @@ public class ClickGUI extends GuiScreen {
         if (wheel == 0) return;
         int mx = Mouse.getEventX() * this.width / this.mc.displayWidth;
         int my = this.height - Mouse.getEventY() * this.height / this.mc.displayHeight - 1;
+        if (SelectWidget.handleOpenPopupScroll(mx, my, wheel)) return;
         for (Panel panel : panels) {
             if (panel.isCollapsed() || !panel.contains(mx, my)) continue;
             panel.scrollBy(-wheel * 14f);
@@ -153,10 +155,16 @@ public class ClickGUI extends GuiScreen {
         if (ModeWidget.handleOpenPopupClick(mouseX, mouseY, mouseButton)) {
             return;
         }
+        if (SelectWidget.handleOpenPopupClick(mouseX, mouseY, mouseButton)) {
+            return;
+        }
 
         if (searchField.onClick(mouseX, mouseY, mouseButton)) {
             return;
         }
+        // Clicking anywhere else moves focus out of the search box. Otherwise a stale
+        // search focus would keep consuming the key that the bind widget is waiting for.
+        searchField.unfocus();
 
         for (Panel panel : panels) {
             if (panel.isInHeader(mouseX, mouseY)) {
@@ -209,15 +217,14 @@ public class ClickGUI extends GuiScreen {
             ModeWidget.closeOpen();
             return;
         }
+        if (keyCode == Keyboard.KEY_ESCAPE && SelectWidget.isOpen()) {
+            SelectWidget.closeOpen();
+            return;
+        }
 
         TextInput textInput = findCapturingText();
         if (textInput != null) {
             textInput.onTextKey(typedChar, keyCode);
-            return;
-        }
-
-        if (searchField.isFocused()) {
-            searchField.onKey(typedChar, keyCode);
             return;
         }
 
@@ -230,6 +237,11 @@ public class ClickGUI extends GuiScreen {
             } else {
                 capturing.setBind(keyCode);
             }
+            return;
+        }
+
+        if (searchField.isFocused()) {
+            searchField.onKey(typedChar, keyCode);
             return;
         }
 
@@ -256,6 +268,8 @@ public class ClickGUI extends GuiScreen {
     public void close() {
         TextInput textInput = findCapturingText();
         if (textInput != null) textInput.commitTextInput();
+        ModeWidget.closeOpen();
+        SelectWidget.closeOpen();
         searchField.unfocus();
         mc.displayGuiScreen(null);
         getClient().saveConfig();

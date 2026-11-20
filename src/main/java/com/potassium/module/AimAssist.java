@@ -5,12 +5,13 @@ import com.potassium.settings.ColorSetting;
 import com.potassium.settings.ModeSetting;
 import com.potassium.settings.Setting;
 import com.potassium.settings.SliderSetting;
+import com.potassium.util.MovementFix;
 import com.potassium.util.RenderUtil;
+import com.potassium.util.RotationUtil;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.ScaledResolution;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.EntityLivingBase;
-import net.minecraft.util.MathHelper;
 import net.minecraft.util.MovingObjectPosition;
 import net.minecraft.util.Vec3;
 import net.minecraftforge.client.event.RenderGameOverlayEvent;
@@ -25,30 +26,33 @@ public class AimAssist extends Module {
     public static final String TARGET_LEGS = "Legs";
     public static final String TARGET_LAZY = "Lazy";
 
-    private final SliderSetting xSmoothSetting = new SliderSetting("X Smooth", 30, 0, 100, 1);
-    private final SliderSetting ySmoothSetting = new SliderSetting("Y Smooth", 30, 0, 100, 1);
-    private final SliderSetting sensitivitySetting = new SliderSetting("Sensitivity", 1.0, 0.1, 3.0, 0.05);
+    private final SliderSetting yawSpeedSetting = new SliderSetting("Yaw Speed", 30, 0, 30, 1);
+    private final SliderSetting pitchSpeedSetting = new SliderSetting("Pitch Speed", 30, 0, 30, 1);
+    private final SliderSetting interpolationSetting = new SliderSetting("Interpolation", 50, 0, 95, 1);
     private final SliderSetting fovSetting = new SliderSetting("FOV", 45, 1, 180, 1);
     private final SliderSetting maxDistanceSetting = new SliderSetting("Max Distance", 4.5, 0.5, 20.0, 0.5);
     private final BooleanSetting showFovCircleSetting = new BooleanSetting("Show FOV Circle", false);
     private final ColorSetting circleColorSetting = new ColorSetting("Circle Color", 0xFF1B395C);
     private final BooleanSetting holdAttackSetting = new BooleanSetting("Hold Attack", false);
     private final BooleanSetting wallCheckSetting = new BooleanSetting("Wall Check", true);
+    private final BooleanSetting movementFixSetting = new BooleanSetting("Movement Fix", true);
     private final ModeSetting targetSetting = new ModeSetting("Target", new String[]{TARGET_HEAD, TARGET_TORSO, TARGET_LEGS, TARGET_LAZY}, 0);
 
     private final Minecraft mc = Minecraft.getMinecraft();
+    private long lastAimNanos;
 
     public AimAssist() {
         super("AimAssist", Category.COMBAT);
-        settings.add(xSmoothSetting);
-        settings.add(ySmoothSetting);
-        settings.add(sensitivitySetting);
+        settings.add(yawSpeedSetting);
+        settings.add(pitchSpeedSetting);
+        settings.add(interpolationSetting);
         settings.add(fovSetting);
         settings.add(maxDistanceSetting);
         settings.add(showFovCircleSetting);
         settings.add(circleColorSetting);
         settings.add(holdAttackSetting);
         settings.add(wallCheckSetting);
+        settings.add(movementFixSetting);
         settings.add(targetSetting);
         MinecraftForge.EVENT_BUS.register(this);
     }
@@ -64,6 +68,11 @@ public class AimAssist extends Module {
         if (!isEnabled()) return;
         if (mc.thePlayer == null || mc.theWorld == null || mc.currentScreen != null) return;
         if (holdAttackSetting.getValue() && !mc.gameSettings.keyBindAttack.isKeyDown()) return;
+
+        long now = System.nanoTime();
+        double deltaSeconds = lastAimNanos == 0L ? 1.0D / 60.0D
+                : (now - lastAimNanos) / 1.0e9D;
+        lastAimNanos = now;
 
         float curYaw = mc.thePlayer.rotationYaw;
         float curPitch = mc.thePlayer.rotationPitch;
@@ -83,6 +92,7 @@ public class AimAssist extends Module {
 
         for (Entity entity : mc.theWorld.loadedEntityList) {
             if (entity == mc.thePlayer || entity.isDead || !(entity instanceof EntityLivingBase)) continue;
+            if (AntiBot.isBot(entity)) continue;
 
             double targetX = entity.posX;
             double targetY = aimY(entity);
@@ -119,23 +129,24 @@ public class AimAssist extends Module {
         // Lazy only helps when the crosshair is not already sitting on the hitbox.
         if (TARGET_LAZY.equals(targetSetting.getValue()) && crosshairOnHitbox(bestTarget)) return;
 
-        double sensitivity = sensitivitySetting.getValue();
-        float yawFactor = (float) (xSmoothSetting.getValue() / 100.0 * sensitivity);
-        float pitchFactor = (float) (ySmoothSetting.getValue() / 100.0 * sensitivity);
+        // The same step KillAura uses, so equal settings turn at the same rate in both.
+        float[] interpolated = RotationUtil.step(curYaw, curPitch, targetYaw, targetPitch,
+                yawSpeedSetting.getValue(), pitchSpeedSetting.getValue(),
+                interpolationSetting.getValue(), deltaSeconds);
 
-        float newYaw = curYaw + wrapDegrees(targetYaw - curYaw) * yawFactor;
-        float newPitch = MathHelper.clamp_float(curPitch + (targetPitch - curPitch) * pitchFactor, -90.0F, 90.0F);
-
-        mc.thePlayer.rotationYaw = newYaw;
-        mc.thePlayer.rotationPitch = newPitch;
+        mc.thePlayer.rotationYaw = interpolated[0];
+        mc.thePlayer.rotationPitch = interpolated[1];
+        if (movementFixSetting.getValue()) MovementFix.apply(curYaw);
     }
 
     @Override
     public void onEnable() {
+        lastAimNanos = 0L;
     }
 
     @Override
     public void onDisable() {
+        lastAimNanos = 0L;
     }
 
     private boolean hasLineOfSight(Entity target) {

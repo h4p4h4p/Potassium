@@ -9,6 +9,11 @@ public class PlayerUtil {
     }
 
     public static void strafe(EntityPlayer player, double speed) {
+        strafe(player, speed, 1.0D);
+    }
+
+    /** Blends the current horizontal direction toward the input direction by strength. */
+    public static void strafe(EntityPlayer player, double speed, double strength) {
         boolean forward = player.moveForward > 0;
         boolean backward = player.moveForward < 0;
         boolean right = player.moveStrafing > 0;
@@ -30,8 +35,9 @@ public class PlayerUtil {
 
         if (forward || backward || left || right) {
             double rad = Math.toRadians(yaw);
-            player.motionX = -Math.sin(rad) * speed;
-            player.motionZ = Math.cos(rad) * speed;
+            double usedSpeed = speed * strength;
+            player.motionX = player.motionX * (1.0D - strength) - Math.sin(rad) * usedSpeed;
+            player.motionZ = player.motionZ * (1.0D - strength) + Math.cos(rad) * usedSpeed;
         }
     }
 }

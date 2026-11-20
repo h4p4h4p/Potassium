@@ -150,6 +150,7 @@ public class ModeWidget extends Widget {
             open = null;
             return true;
         }
+        SelectWidget.closeOpen();
         open = this;
         return true;
     }

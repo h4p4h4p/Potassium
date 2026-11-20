@@ -10,24 +10,35 @@ public class ModuleManager {
     public ModuleManager() {
         modules.add(new Speed());
         modules.add(new AutoSprint());
-        modules.add(new LegitScaffold());
-        modules.add(new Internet());
+        modules.add(new MoreKB());
+        modules.add(new NoSlow());
+        modules.add(new Eagle());
+        modules.add(new Scaffold());
+        modules.add(new FastBreak());
+        modules.add(new Blink());
         modules.add(new Hitboxes());
+        modules.add(new KillAura());
         modules.add(new LeftClicker());
         modules.add(new AimAssist());
-        modules.add(new HitSelect());
+        modules.add(new AntiBot());
         modules.add(new Criticals());
         modules.add(new RightClicker());
         modules.add(new FastPlace());
+        modules.add(new ChestStealer());
+        modules.add(new AutoArmor());
         modules.add(new AntiKnockback());
-        modules.add(new Breaker());
+        modules.add(new Backtrack());
         modules.add(new Esp());
         modules.add(new StorageESP());
         modules.add(new Fullbright());
         modules.add(new NoFOV());
+        modules.add(new FreeLook());
+        modules.add(new Rotations());
         modules.add(new Interface());
+        modules.add(new KeybindViewer());
         modules.add(new ClientSpoofer());
         modules.add(new Flight());
+        modules.add(new AntiVoid());
     }
 
     public List<Module> getModules() {

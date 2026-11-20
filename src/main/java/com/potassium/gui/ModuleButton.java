@@ -6,6 +6,7 @@ import com.potassium.settings.BooleanSetting;
 import com.potassium.settings.ColorSetting;
 import com.potassium.settings.ModeSetting;
 import com.potassium.settings.Setting;
+import com.potassium.settings.SelectSetting;
 import com.potassium.settings.SliderSetting;
 import com.potassium.settings.StringSetting;
 import com.potassium.util.RenderUtil;
@@ -85,7 +86,10 @@ public class ModuleButton {
             if (!search.matches(setting.getName())) continue;
             visible.add(setting);
         }
-        boolean same = builtSettings.size() == visible.size();
+        // A module with no settings still needs its bind row, so an empty widget list
+        // cannot be treated as already built while the bind widget is still missing.
+        boolean needsBind = module.canBind() && bindWidget == null;
+        boolean same = !needsBind && builtSettings.size() == visible.size();
         if (same) {
             for (int i = 0; i < visible.size(); i++) {
                 if (builtSettings.get(i) != visible.get(i)) {
@@ -109,6 +113,8 @@ public class ModuleButton {
                 widgets.add(new ColorWidget((ColorSetting) setting));
             } else if (setting instanceof StringSetting) {
                 widgets.add(new StringWidget((StringSetting) setting));
+            } else if (setting instanceof SelectSetting) {
+                widgets.add(new SelectWidget((SelectSetting) setting));
             }
             builtSettings.add(setting);
         }

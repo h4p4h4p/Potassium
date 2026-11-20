@@ -4,6 +4,8 @@ import com.potassium.Potassium;
 import com.potassium.module.Module;
 import org.lwjgl.input.Keyboard;
 
+import java.util.Locale;
+
 public class BindCommand extends ChatCommand {
 
     public BindCommand() {
@@ -38,8 +40,9 @@ public class BindCommand extends ChatCommand {
             hold = mode.equals("hold");
         }
 
-        String keyName = args[1].toLowerCase();
-        if (keyName.equals("none") || keyName.equals("unbind") || keyName.equals("delete")) {
+        String keyName = args[1];
+        if (keyName.equalsIgnoreCase("none") || keyName.equalsIgnoreCase("unbind")
+                || keyName.equalsIgnoreCase("delete")) {
             module.setKey(-1);
             module.setHoldBind(false);
             CommandManager.sendMessage("\u00a7a" + module.getName() + "\u00a77 unbound");
@@ -47,7 +50,8 @@ public class BindCommand extends ChatCommand {
             return;
         }
 
-        int code = Keyboard.getKeyIndex(keyName);
+        // LWJGL key names are uppercase, and getKeyIndex is case-sensitive.
+        int code = Keyboard.getKeyIndex(keyName.toUpperCase(Locale.ROOT));
         if (code == Keyboard.KEY_NONE) {
             try {
                 code = Integer.parseInt(keyName);

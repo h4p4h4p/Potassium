@@ -23,14 +23,14 @@ import net.minecraftforge.fml.common.gameevent.TickEvent;
 
 import java.util.ArrayDeque;
 
-public class Internet extends Module {
+public class Blink extends Module {
 
     public static final String MODE_INBOUND = "Inbound";
     public static final String MODE_OUTBOUND = "Outbound";
     public static final String MODE_BOTH = "Both";
     public static final String MODE_PULSE = "Pulse";
 
-    private static final String HANDLER_NAME = "potassium_network_modifications";
+    private static final String HANDLER_NAME = "potassium_blink";
 
     private final ModeSetting modeSetting = new ModeSetting("Mode",
             new String[]{MODE_INBOUND, MODE_OUTBOUND, MODE_BOTH, MODE_PULSE}, ModeSetting.UNSET);
@@ -46,8 +46,8 @@ public class Internet extends Module {
     private double anchorY;
     private double anchorZ;
 
-    public Internet() {
-        super("Internet", Category.MOVEMENT);
+    public Blink() {
+        super("Blink", Category.MOVEMENT);
         settings.add(modeSetting);
         settings.add(pulseDirectionSetting);
         settings.add(pulseDelaySetting);

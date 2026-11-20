@@ -48,6 +48,23 @@ public class ConfigManager {
         }
     }
 
+    /** Carries a renamed module's settings over to its new config keys. */
+    private static void migrateRenamedModule(Map<String, String> values, String from, String to) {
+        for (Map.Entry<String, String> entry : new ArrayList<>(values.entrySet())) {
+            String key = entry.getKey();
+            if (!key.startsWith(from + ".")) continue;
+            values.putIfAbsent(to + key.substring(from.length()), entry.getValue());
+        }
+    }
+
+    /** Scaffold.Tower was a boolean before the Tower mode setting existed. */
+    private static void migrateScaffoldTower(Map<String, String> values) {
+        String raw = values.get("Scaffold.Tower");
+        if (raw == null) return;
+        if (raw.equalsIgnoreCase("true")) values.put("Scaffold.Tower", "1");
+        else if (raw.equalsIgnoreCase("false")) values.put("Scaffold.Tower", "0");
+    }
+
     /** Converts the old 0..100 AntiKnockback sliders to the current -1..1 multipliers. */
     private static void migrateAntiKnockbackScale(Map<String, String> values, String key) {
         String raw = values.get(key);
@@ -105,25 +122,10 @@ public class ConfigManager {
             CommandManager.rainbow = rainbow.equalsIgnoreCase("true");
         }
 
-        // Sprint was renamed to AutoSprint; carry over its enabled state and key bind.
-        if (!values.containsKey("AutoSprint.enabled") && values.containsKey("Sprint.enabled")) {
-            values.put("AutoSprint.enabled", values.get("Sprint.enabled"));
-            if (values.containsKey("Sprint.key")) {
-                values.put("AutoSprint.key", values.get("Sprint.key"));
-            }
-        }
-
-        // BedNuker was renamed to Breaker; carry over its enable state, bind and settings.
-        // Its Mode and Speed settings are gone with the Silent mode, so they are not copied.
-        if (!values.containsKey("Breaker.enabled") && values.containsKey("BedNuker.enabled")) {
-            for (Map.Entry<String, String> entry : new ArrayList<>(values.entrySet())) {
-                String key = entry.getKey();
-                if (!key.startsWith("BedNuker.")) continue;
-                String name = key.substring("BedNuker.".length());
-                if (name.equals("Mode") || name.equals("Speed")) continue;
-                values.put("Breaker." + name, entry.getValue());
-            }
-        }
+        // Renamed modules keep their old settings and binds.
+        migrateRenamedModule(values, "Sprint", "AutoSprint");
+        migrateRenamedModule(values, "Internet", "Blink");
+        migrateRenamedModule(values, "LegitScaffold", "Eagle");
 
         // Speed's mode slot 2 held the removed HurtBoost; LowHop was added there in v3.
         if (configVersion < 3 && "2".equals(values.get("Speed.Mode"))) {
@@ -133,6 +135,7 @@ public class ConfigManager {
         // AntiKnockback's knockback multipliers used to be stored as 0..100 percentages.
         migrateAntiKnockbackScale(values, "AntiKnockback.Horizontal");
         migrateAntiKnockbackScale(values, "AntiKnockback.Vertical");
+        migrateScaffoldTower(values);
         // Simulations was removed from AntiKnockback; use Modify rather than clamping to Lag.
         if (legacyConfig && "2".equals(values.get("AntiKnockback.Mode"))) {
             values.put("AntiKnockback.Mode", "0");

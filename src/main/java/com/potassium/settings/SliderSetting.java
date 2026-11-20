@@ -32,8 +32,18 @@ public class SliderSetting extends Setting {
         return step;
     }
 
+    /** Slider dragging and programmatic defaults stay inside the configured range. */
     public void setValue(double value) {
         this.value = Math.max(min, Math.min(max, value));
+    }
+
+    /**
+     * Manual text entry can deliberately go outside the slider range. The slider still uses
+     * min/max for dragging and display; only the stored value is left exact.
+     */
+    public void setValueExact(double value) {
+        if (Double.isNaN(value) || Double.isInfinite(value)) return;
+        this.value = value;
     }
 
     @Override
@@ -44,7 +54,7 @@ public class SliderSetting extends Setting {
     @Override
     public void fromConfigString(String s) {
         try {
-            setValue(Double.parseDouble(s));
+            setValueExact(Double.parseDouble(s));
         } catch (NumberFormatException ignored) {
         }
     }

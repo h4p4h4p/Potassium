@@ -174,6 +174,7 @@ public class Esp extends Module {
         for (int i = 0; i < players.size(); i++) {
             Entity entity = players.get(i);
             if (entity == mc.thePlayer) continue;
+            if (AntiBot.isBot(entity)) continue;
             if (legit && !isEntityVisible(entity, camX, camY, camZ)) continue;
             AxisAlignedBB bb = entity.getEntityBoundingBox();
 

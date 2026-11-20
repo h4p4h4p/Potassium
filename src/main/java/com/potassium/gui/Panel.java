@@ -180,6 +180,7 @@ public class Panel {
     }
 
     public void toggleCollapsed() {
+        SelectWidget.closeOpen();
         collapsed = !collapsed;
         scroll = 0f;
     }
@@ -190,6 +191,7 @@ public class Panel {
 
     public void scrollBy(float amount) {
         if (collapsed) return;
+        if (amount != 0f) SelectWidget.closeOpen();
         scroll = clampScroll(scroll + amount);
     }
 

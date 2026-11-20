@@ -7,9 +7,12 @@ import net.minecraft.util.MathHelper;
 import org.lwjgl.input.Keyboard;
 import org.lwjgl.input.Mouse;
 
+import java.math.BigDecimal;
+import java.util.Locale;
+
 public class SliderWidget extends Widget implements TextInput {
 
-    private static final int MAX_CHARS = 9;
+    private static final int MAX_CHARS = 32;
 
     private final SliderSetting setting;
     private float trackX;
@@ -57,7 +60,9 @@ public class SliderWidget extends Widget implements TextInput {
         drawModifiedMarker(!setting.isDefault(), setting.getName());
 
         double range = setting.getMax() - setting.getMin();
-        double frac = (setting.getValue() - setting.getMin()) / range;
+        double frac = range == 0.0D ? 0.0D : (setting.getValue() - setting.getMin()) / range;
+        if (Double.isNaN(frac) || Double.isInfinite(frac)) frac = 0.0D;
+        frac = Math.max(0.0D, Math.min(1.0D, frac));
         float fill = (float) (trackW * frac);
 
         RenderUtil.drawRect(trackX, y + height / 2f - 2f, trackW, 4, Theme.TRACK);
@@ -83,27 +88,46 @@ public class SliderWidget extends Widget implements TextInput {
     }
 
     private String formatValue() {
-        int decimals = setting.getStep() >= 1 ? 0 : (setting.getStep() >= 0.1 ? 1 : 2);
-        return String.format("%." + decimals + "f", setting.getValue());
+        double value = setting.getValue();
+        if (Double.isNaN(value) || Double.isInfinite(value)) return "0";
+
+        if (value >= setting.getMin() && value <= setting.getMax() && isStepAligned(value)) {
+            int decimals = setting.getStep() >= 1 ? 0 : (setting.getStep() >= 0.1 ? 1 : 2);
+            return String.format(Locale.ROOT, "%." + decimals + "f", value);
+        }
+
+        // Manual values may be far outside the slider range or intentionally not aligned
+        // to the slider step. Show the exact value rather than rounding it away.
+        if (Math.abs(value) >= 1.0E9D || (value != 0.0D && Math.abs(value) < 1.0E-4D)) {
+            return Double.toString(value);
+        }
+        return BigDecimal.valueOf(value).stripTrailingZeros().toPlainString();
+    }
+
+    private boolean isStepAligned(double value) {
+        if (setting.getStep() <= 0.0D) return false;
+        double steps = value / setting.getStep();
+        return Math.abs(steps - Math.rint(steps)) < 1.0E-9D;
     }
 
     private void computeTrack() {
         float labelZone = RenderUtil.getTextWidth(setting.getName()) + 10;
         if (!setting.isDefault()) labelZone += 7;
         trackX = x + labelZone;
-        float maxVw = RenderUtil.getTextWidth(formatMaxValue());
+        float maxVw = Math.max(RenderUtil.getTextWidth(formatMaxValue()), RenderUtil.getTextWidth(display()));
         trackW = Math.max((x + width - 12 - maxVw) - trackX, 4);
     }
 
     private String formatMaxValue() {
         int decimals = setting.getStep() >= 1 ? 0 : (setting.getStep() >= 0.1 ? 1 : 2);
-        return String.format("%." + decimals + "f", setting.getMax());
+        return String.format(Locale.ROOT, "%." + decimals + "f", setting.getMax());
     }
 
     @Override
     public float getPreferredWidth() {
         float marker = setting.isDefault() ? 0 : 7;
-        return Math.max(110, RenderUtil.getTextWidth(setting.getName()) + marker + 10 + 48 + RenderUtil.getTextWidth(formatMaxValue()) + 10);
+        float valueWidth = Math.max(RenderUtil.getTextWidth(formatMaxValue()), RenderUtil.getTextWidth(display()));
+        return Math.max(110, RenderUtil.getTextWidth(setting.getName()) + marker + 10 + 48 + valueWidth + 10);
     }
 
     private boolean onTrack(float mx, float my) {
@@ -169,11 +193,18 @@ public class SliderWidget extends Widget implements TextInput {
         return true;
     }
 
-    /** Allows negatives and decimals, which the -1..1 multiplier sliders need. */
+    /** Accepts ordinary decimals and scientific notation; the value itself is not clamped. */
     private boolean accepts(char c) {
         if (c >= '0' && c <= '9') return true;
-        if (c == '-') return buffer.length() == 0;
-        return c == '.' && buffer.indexOf(".") < 0;
+        if ((c == '-' || c == '+') && buffer.length() == 0) return true;
+        if (c == '.' && buffer.indexOf(".") < 0 && buffer.indexOf("e") < 0 && buffer.indexOf("E") < 0) return true;
+        if ((c == 'e' || c == 'E') && buffer.length() > 0
+                && buffer.indexOf("e") < 0 && buffer.indexOf("E") < 0) return true;
+        if ((c == '-' || c == '+') && buffer.length() > 0) {
+            char last = buffer.charAt(buffer.length() - 1);
+            return last == 'e' || last == 'E';
+        }
+        return false;
     }
 
     @Override
@@ -183,8 +214,7 @@ public class SliderWidget extends Widget implements TextInput {
         if (buffer.length() > 0) {
             try {
                 double parsed = Double.parseDouble(buffer.toString());
-                double snapped = Math.round(parsed / setting.getStep()) * setting.getStep();
-                setting.setValue(snapped);
+                setting.setValueExact(parsed);
             } catch (NumberFormatException ignored) {
             }
         }

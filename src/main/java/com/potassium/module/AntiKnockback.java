@@ -4,6 +4,7 @@ import com.potassium.settings.ModeSetting;
 import com.potassium.settings.Setting;
 import com.potassium.settings.SliderSetting;
 import io.netty.channel.Channel;
+import io.netty.channel.ChannelHandler;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelInboundHandlerAdapter;
 import net.minecraft.client.Minecraft;
@@ -16,6 +17,7 @@ import net.minecraft.util.Vec3;
 import net.minecraftforge.common.MinecraftForge;
 import net.minecraftforge.fml.common.eventhandler.SubscribeEvent;
 import net.minecraftforge.fml.common.gameevent.TickEvent;
+import net.minecraftforge.fml.common.network.FMLNetworkEvent;
 
 public class AntiKnockback extends Module {
 
@@ -32,9 +34,19 @@ public class AntiKnockback extends Module {
     private final SliderSetting lagChanceSetting = new SliderSetting("Lag Chance", 0, 0, 100, 5);
 
     private final Minecraft mc = Minecraft.getMinecraft();
-    private AntiKnockbackHandler handler;
+    private final AntiKnockbackHandler handler = new AntiKnockbackHandler();
     private Channel boundChannel;
-    private int playerId = -1;
+    private volatile int playerId = -1;
+    private volatile boolean active;
+    private volatile boolean injected;
+
+    // Snapshot settings for the Netty thread; Minecraft settings are not thread-safe.
+    private volatile boolean modifyMode;
+    private volatile boolean lagMode;
+    private volatile boolean reversalMode;
+    private volatile double horizontal;
+    private volatile double vertical;
+    private volatile double lagChance;
 
     private volatile int clientTick;
     private volatile boolean reversalPending;
@@ -92,13 +104,35 @@ public class AntiKnockback extends Module {
     public void onTick(TickEvent.ClientTickEvent event) {
         if (event.phase == TickEvent.Phase.START) {
             ++clientTick;
+            syncSettings();
             if (!isEnabled()) return;
-            if (!reversal()) clearReversal();
-            if (mc.thePlayer != null) playerId = mc.thePlayer.getEntityId();
+            if (!reversalMode) clearReversal();
+            EntityPlayerSP player = mc.thePlayer;
+            if (player != null) playerId = player.getEntityId();
             armChannel();
+
+            // Fallback for a pipeline that has not accepted the handler yet. The
+            // packet path is primary; this still prevents the knockback if the
+            // channel was replaced or injection failed.
+            if (!injected && modifyMode && player != null && player.velocityChanged) {
+                player.motionX *= horizontal;
+                player.motionY *= vertical;
+                player.motionZ *= horizontal;
+                player.velocityChanged = false;
+            }
             return;
         }
-        if (isEnabled() && reversal()) handleReversal();
+        if (isEnabled() && reversalMode) handleReversal();
+    }
+
+    private void syncSettings() {
+        modifyMode = modify();
+        lagMode = lag();
+        reversalMode = reversal();
+        horizontal = horizontalSetting.getValue();
+        vertical = verticalSetting.getValue();
+        lagChance = lagChanceSetting.getValue();
+        active = isEnabled();
     }
 
     /**
@@ -151,41 +185,59 @@ public class AntiKnockback extends Module {
         if (mc.getNetHandler() == null) return;
         NetworkManager manager = mc.getNetHandler().getNetworkManager();
         if (manager == null) return;
-        Channel channel = manager.channel();
-        if (channel == null || !channel.isActive()) return;
+        armChannel(manager.channel());
+    }
 
-        if (handler == null) {
-            handler = new AntiKnockbackHandler();
-            boundChannel = channel;
-            if (channel.pipeline().get(HANDLER_NAME) == null) {
-                channel.eventLoop().execute(() -> {
-                    try {
-                        channel.pipeline().addBefore("packet_handler", HANDLER_NAME, handler);
-                    } catch (Exception ignored) {
-                    }
-                });
-            }
-        } else if (boundChannel != channel) {
-            final Channel old = boundChannel;
-            boundChannel = channel;
-            channel.eventLoop().execute(() -> {
-                try {
-                    if (old != null && old.isActive()) old.pipeline().remove(HANDLER_NAME);
-                } catch (Exception ignored) {
-                }
-            });
-            try {
-                if (channel.pipeline().get(HANDLER_NAME) == null) {
-                    channel.pipeline().addBefore("packet_handler", HANDLER_NAME, handler);
-                }
-            } catch (Exception ignored) {
-            }
+    /**
+     * A packet can arrive after the client tick but before the player tick. Catch the
+     * residual velocity at player-tick start when the pipeline handler is unavailable.
+     */
+    @SubscribeEvent
+    public void onPlayerTick(TickEvent.PlayerTickEvent event) {
+        if (event.phase != TickEvent.Phase.START || !active || injected) return;
+        EntityPlayerSP player = mc.thePlayer;
+        if (player == null || event.player != player || !modifyMode || !player.velocityChanged) {
+            return;
         }
+        player.motionX *= horizontal;
+        player.motionY *= vertical;
+        player.motionZ *= horizontal;
+        player.velocityChanged = false;
+    }
+
+    /**
+     * The handler is sharable and stays installed while the module is disabled. That
+     * avoids both the old "failed to attach once, never retry" path and the disable/
+     * re-enable race that could remove a freshly attached handler.
+     */
+    private void armChannel(Channel channel) {
+        if (channel == null || !channel.isActive()) return;
+        boundChannel = channel;
+
+        if (channel.pipeline().get(HANDLER_NAME) == null) {
+            try {
+                channel.pipeline().addBefore("packet_handler", HANDLER_NAME, handler);
+                injected = true;
+            } catch (Exception ignored) {
+                injected = false;
+            }
+        } else {
+            injected = channel.pipeline().get(HANDLER_NAME) == handler;
+        }
+    }
+
+    @SubscribeEvent
+    public void onClientConnected(FMLNetworkEvent.ClientConnectedToServerEvent event) {
+        if (!isEnabled() || event.manager == null) return;
+        syncSettings();
+        armChannel(event.manager.channel());
     }
 
     @Override
     public void onEnable() {
         clearReversal();
+        syncSettings();
+        active = true;
         if (mc.thePlayer != null) playerId = mc.thePlayer.getEntityId();
         armChannel();
     }
@@ -193,55 +245,49 @@ public class AntiKnockback extends Module {
     @Override
     public void onDisable() {
         clearReversal();
-        AntiKnockbackHandler h = handler;
-        handler = null;
-        Channel channel = boundChannel;
+        active = false;
+        injected = false;
         boundChannel = null;
-        if (channel != null && channel.isActive()) {
-            channel.eventLoop().execute(() -> {
-                try {
-                    if (channel.pipeline().get(HANDLER_NAME) != null) channel.pipeline().remove(HANDLER_NAME);
-                } catch (Exception ignored) {
-                }
-            });
-        }
     }
 
+    @ChannelHandler.Sharable
     private class AntiKnockbackHandler extends ChannelInboundHandlerAdapter {
 
         @Override
         public void channelRead(ChannelHandlerContext ctx, Object msg) throws Exception {
-            if (isEnabled() && msg instanceof Packet) {
+            if (active && msg instanceof Packet) {
                 int id = playerId;
+                if (id < 0 && mc.thePlayer != null) {
+                    id = mc.thePlayer.getEntityId();
+                    playerId = id;
+                }
                 if (msg instanceof S12PacketEntityVelocity) {
                     S12PacketEntityVelocity p = (S12PacketEntityVelocity) msg;
                     if (id >= 0 && p.getEntityID() == id) {
-                        if (lag() && Math.random() * 100.0D < lagChanceSetting.getValue()) {
+                        if (lagMode && Math.random() * 100.0D < lagChance) {
                             return;
                         }
-                        if (modify()) {
-                            double h = horizontalSetting.getValue();
-                            double v = verticalSetting.getValue();
+                        if (modifyMode) {
                             msg = new S12PacketEntityVelocity(id,
-                                    p.getMotionX() / 8000.0 * h,
-                                    p.getMotionY() / 8000.0 * v,
-                                    p.getMotionZ() / 8000.0 * h);
+                                    p.getMotionX() / 8000.0 * horizontal,
+                                    p.getMotionY() / 8000.0 * vertical,
+                                    p.getMotionZ() / 8000.0 * horizontal);
                         }
-                        if (reversal()) captureReversal();
+                        if (reversalMode) captureReversal();
                     }
                 } else if (msg instanceof S27PacketExplosion) {
                     S27PacketExplosion p = (S27PacketExplosion) msg;
-                    if (lag() && Math.random() * 100.0D < lagChanceSetting.getValue()) {
+                    if (lagMode && Math.random() * 100.0D < lagChance) {
                         return;
                     }
-                    if (modify()) {
-                        double h = horizontalSetting.getValue();
-                        double v = verticalSetting.getValue();
+                    if (modifyMode) {
                         msg = new S27PacketExplosion(p.getX(), p.getY(), p.getZ(), p.getStrength(),
                                 p.getAffectedBlockPositions(),
-                                new Vec3(p.func_149149_c() * h, p.func_149144_d() * v, p.func_149147_e() * h));
+                                new Vec3(p.func_149149_c() * horizontal,
+                                        p.func_149144_d() * vertical,
+                                        p.func_149147_e() * horizontal));
                     }
-                    if (reversal()) captureReversal();
+                    if (reversalMode) captureReversal();
                 }
             }
             ctx.fireChannelRead(msg);

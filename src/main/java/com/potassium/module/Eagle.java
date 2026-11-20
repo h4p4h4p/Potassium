@@ -16,7 +16,7 @@ import org.lwjgl.input.Keyboard;
  * edge-guard while bridging. The sneak key state is driven instead of raw packets so
  * vanilla handles the slowdown, the camera height and the client-side C0B packets.
  */
-public class LegitScaffold extends Module {
+public class Eagle extends Module {
 
     private final SliderSetting distanceSetting = new SliderSetting("Distance", 0.3, 0.01, 0.30, 0.01);
     private final BooleanSetting whileSneakingSetting = new BooleanSetting("While Sneaking", false);
@@ -25,8 +25,8 @@ public class LegitScaffold extends Module {
     private final Minecraft mc = Minecraft.getMinecraft();
     private boolean autoSneaking;
 
-    public LegitScaffold() {
-        super("LegitScaffold", Category.MOVEMENT);
+    public Eagle() {
+        super("Eagle", Category.MOVEMENT);
         settings.add(distanceSetting);
         settings.add(whileSneakingSetting);
         settings.add(whileInAirSetting);
