@@ -1,5 +1,6 @@
-Potassium Client is developed by AL3XMABAH0
+!! USE % FOR CHAT CMDS
 
-  To open the ClickGUI use K
+Really basic hvh client, bypasses SOME servers, currently supports:
 
-  % is the prefix for chat commands, for more info use %help
+Vanilla (duh)
+NCP
