@@ -1,6 +1,7 @@
 !! USE % FOR CHAT CMDS
+!! FORGE 1.8.9
 
-Really basic hvh client, bypasses SOME servers, currently supports:
+Supports:
 
 Vanilla (duh),
 NCP (sometimes)
