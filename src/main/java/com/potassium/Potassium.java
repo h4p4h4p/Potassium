@@ -25,7 +25,7 @@ public class Potassium {
 
     public static final String MODID = "potassium";
     public static final String NAME = "Potassium";
-    public static final String VERSION = "ItsEverydayBro";
+    public static final String VERSION = "0.2";
 
     public static Potassium INSTANCE;
 
