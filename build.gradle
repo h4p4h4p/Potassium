@@ -14,7 +14,7 @@ buildscript {
 apply plugin: "java"
 apply plugin: "net.minecraftforge.gradle.forge"
 
-version = "ItsEverydayBro"
+version = "0.2"
 group = "com.potassium"
 archivesBaseName = "potassium"
 
