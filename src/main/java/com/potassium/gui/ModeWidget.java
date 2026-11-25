@@ -12,7 +12,7 @@ import com.potassium.util.RenderUtil;
  */
 public class ModeWidget extends Widget {
 
-    private static final float ROW = 12f;
+    private static final float ROW = 13f;
     private static final float CARET_W = 4f;
     private static final float CARET_H = 3f;
     private static final float FIELD_PAD = 4f;
@@ -52,15 +52,16 @@ public class ModeWidget extends Widget {
     @Override
     public void draw(float mx, float my) {
         boolean hovered = contains(mx, my) || (open == this && insideList(mx, my));
-        RenderUtil.drawString(setting.getName(), x + 6, y + 4, hovered ? Theme.TEXT : Theme.TEXT_GRAY);
+        RenderUtil.drawGuiString(setting.getName(), x + 6, RenderUtil.guiTextY(y, height), hovered ? Theme.TEXT : Theme.TEXT_GRAY);
         drawModifiedMarker(!setting.isDefault(), setting.getName());
 
         float fieldX = x + width - 6 - fieldW();
-        RenderUtil.drawRect(fieldX, y + 1, fieldW(), height - 2, open == this ? 0x40219609 : 0x26000000);
+        RenderUtil.drawRect(fieldX, y + 1, fieldW(), height - 2,
+                open == this ? (0x40 << 24) | (Theme.ACCENT & 0xFFFFFF) : Theme.FIELD_BG);
 
         String value = setting.getDisplayValue();
         int valueColor = setting.isUnset() ? Theme.TEXT_GRAY : (hovered ? Theme.ACCENT : Theme.TEXT);
-        RenderUtil.drawString(value, fieldX + FIELD_PAD, y + 4, valueColor);
+        RenderUtil.drawGuiString(value, fieldX + FIELD_PAD, RenderUtil.guiTextY(y, height), valueColor);
 
         float caretX = fieldX + fieldW() - FIELD_PAD - CARET_W;
         float caretY = y + height / 2f - CARET_H / 2f;
@@ -74,7 +75,7 @@ public class ModeWidget extends Widget {
     }
 
     private float fieldW() {
-        return Math.max(28f, RenderUtil.getTextWidth(setting.getDisplayValue()) + 10 + CARET_W + FIELD_PAD);
+        return Math.max(28f, RenderUtil.getGuiTextWidth(setting.getDisplayValue()) + 10 + CARET_W + FIELD_PAD);
     }
 
     private float listX() {
@@ -82,9 +83,9 @@ public class ModeWidget extends Widget {
     }
 
     private float listW() {
-        float widest = RenderUtil.getTextWidth(ModeSetting.UNSET_LABEL);
+        float widest = RenderUtil.getGuiTextWidth(ModeSetting.UNSET_LABEL);
         for (String option : setting.getOptions()) {
-            widest = Math.max(widest, RenderUtil.getTextWidth(option));
+            widest = Math.max(widest, RenderUtil.getGuiTextWidth(option));
         }
         return Math.max(fieldW(), widest + 12);
     }
@@ -113,8 +114,8 @@ public class ModeWidget extends Widget {
         float ly = listY();
         String[] options = setting.getOptions();
 
-        RenderUtil.drawRect(lx - 1, ly - 1, listW() + 2, listH() + 2, 0xFF07070A);
-        RenderUtil.drawRect(lx, ly, listW(), listH(), 0xFF1B1D22);
+        RenderUtil.drawRect(lx - 1, ly - 1, listW() + 2, listH() + 2, Theme.POPUP_BORDER);
+        RenderUtil.drawRect(lx, ly, listW(), listH(), Theme.POPUP_BG);
 
         for (int i = 0; i < options.length; i++) {
             float rowY = ly + i * ROW;
@@ -122,7 +123,7 @@ public class ModeWidget extends Widget {
             boolean hovered = mx >= lx && mx <= lx + listW() && my >= rowY && my <= rowY + ROW;
             if (hovered) RenderUtil.drawRect(lx + 1, rowY + 1, listW() - 2, ROW - 2, Theme.HOVER);
             int color = selected ? Theme.ACCENT : (hovered ? Theme.TEXT : Theme.TEXT_GRAY);
-            RenderUtil.drawString(options[i], lx + 5, rowY + 3, color);
+            RenderUtil.drawGuiString(options[i], lx + 5, RenderUtil.guiTextY(rowY, ROW), color);
             if (selected) {
                 RenderUtil.drawRect(lx + listW() - 4, rowY + ROW / 2f - 1, 2, 2, Theme.ACCENT);
             }
@@ -158,11 +159,11 @@ public class ModeWidget extends Widget {
     @Override
     public float getPreferredWidth() {
         float marker = setting.isDefault() ? 0 : 7;
-        float widest = RenderUtil.getTextWidth(ModeSetting.UNSET_LABEL);
+        float widest = RenderUtil.getGuiTextWidth(ModeSetting.UNSET_LABEL);
         for (String option : setting.getOptions()) {
-            widest = Math.max(widest, RenderUtil.getTextWidth(option));
+            widest = Math.max(widest, RenderUtil.getGuiTextWidth(option));
         }
         // Wide enough for the label, the widest option once opened, and the caret.
-        return Math.max(120, RenderUtil.getTextWidth(setting.getName()) + marker + 14 + widest + 10 + CARET_W);
+        return Math.max(120, RenderUtil.getGuiTextWidth(setting.getName()) + marker + 14 + widest + 10 + CARET_W);
     }
 }

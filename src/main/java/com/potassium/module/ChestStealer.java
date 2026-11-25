@@ -22,6 +22,7 @@ import net.minecraft.item.ItemFishingRod;
 import net.minecraft.item.ItemFood;
 import net.minecraft.item.ItemPickaxe;
 import net.minecraft.item.ItemPotion;
+import net.minecraft.item.ItemSpade;
 import net.minecraft.item.ItemSnowball;
 import net.minecraft.item.ItemStack;
 import net.minecraft.item.ItemSword;
@@ -41,7 +42,7 @@ public class ChestStealer extends Module {
 
     private final SliderSetting delaySetting = new SliderSetting("Delay", 50, 0, 500, 10);
     private final SelectSetting blacklistSetting = new SelectSetting("Blacklist", new String[]{
-            "Armor", "Healing", "Potions", "Food", "Swords", "Pickaxes", "Axes", "Fishing Rods",
+            "Armor", "Healing", "Potions", "Food", "Swords", "Pickaxes", "Shovels", "Axes", "Fishing Rods",
             "Buckets", "Bows", "Arrows", "Projectiles", "Blocks"
     });
 
@@ -49,7 +50,7 @@ public class ChestStealer extends Module {
     private long lastClick;
 
     public ChestStealer() {
-        super("ChestStealer", Category.COMBAT);
+        super("ChestStealer", Category.PLAYER);
         settings.add(delaySetting);
         settings.add(blacklistSetting);
         MinecraftForge.EVENT_BUS.register(this);
@@ -97,6 +98,7 @@ public class ChestStealer extends Module {
         if (blacklistSetting.isSelected("Food") && item instanceof ItemFood) return true;
         if (blacklistSetting.isSelected("Swords") && item instanceof ItemSword) return true;
         if (blacklistSetting.isSelected("Pickaxes") && item instanceof ItemPickaxe) return true;
+        if (blacklistSetting.isSelected("Shovels") && item instanceof ItemSpade) return true;
         if (blacklistSetting.isSelected("Axes") && item instanceof ItemAxe) return true;
         if (blacklistSetting.isSelected("Fishing Rods") && item instanceof ItemFishingRod) return true;
         if (blacklistSetting.isSelected("Buckets") && isBucket(item)) return true;

@@ -29,56 +29,69 @@ public class RotationUtil {
         return getRotations(new Vec3(x, y, z));
     }
 
+    public static final String SMOOTHING_LINEAR = "Linear";
+    public static final String SMOOTHING_EXPONENTIAL = "Exponential";
+
     /**
-     * Interpolates a rotation toward a target at a time-based speed. {@code interpolation}
-     * is a percentage where 0 applies the target immediately and higher values turn more
-     * slowly. The speed is expressed in degrees per second so the result stays smooth at
-     * any frame rate, and the step is capped by the actual time since the previous update.
+     * Degrees a speed setting allows in one tick, the unit the game itself moves in. 180 is a
+     * whole half turn, which puts the aim on the target in the tick it was chosen; below that
+     * the turn is deliberately drawn out over several ticks. LiquidBounce's rotation speeds
+     * live on the same 0..180 scale.
      */
-    public static float[] interpolate(float currentYaw, float currentPitch,
-                                      float targetYaw, float targetPitch,
-                                      double interpolation, double deltaSeconds) {
-        float yawDelta = MathHelper.wrapAngleTo180_float(targetYaw - currentYaw);
-        float pitchDelta = targetPitch - currentPitch;
-
-        double clamped = Math.max(0.0D, Math.min(95.0D, interpolation));
-        if (clamped <= 0.0D) {
-            return new float[]{currentYaw + yawDelta,
-                    MathHelper.clamp_float(currentPitch + pitchDelta, -90.0F, 90.0F)};
-        }
-
-        double smoothing = clamped / 95.0D;
-        double degreesPerSecond = 1080.0D - smoothing * 1020.0D;
-        double frameTime = Math.max(0.001D, Math.min(0.1D, deltaSeconds));
-        float maxStep = (float) (degreesPerSecond * frameTime);
-
-        float yaw = currentYaw + MathHelper.clamp_float(yawDelta, -maxStep, maxStep);
-        float pitch = MathHelper.clamp_float(
-                currentPitch + MathHelper.clamp_float(pitchDelta, -maxStep, maxStep), -90.0F, 90.0F);
-        return new float[]{yaw, pitch};
+    public static double speed(double degrees) {
+        if (Double.isNaN(degrees) || Double.isInfinite(degrees)) return 0.0D;
+        return Math.max(0.0D, Math.min(180.0D, degrees));
     }
 
     /**
-     * One frame of a smooth aim toward a target. The speed settings scale the remaining
-     * angle and Interpolation then caps the step, so both parts of the curve apply: 30 on a
-     * speed is a full turn toward the target, and lower values approach it more slowly.
-     *
-     * AimAssist and KillAura both step through this, so the same settings turn the view at
-     * the same rate in either module instead of each applying its own blend.
+     * One tick's turn under a smoothing curve, never longer than the axis limit. Linear takes
+     * the whole step; Exponential moves a fraction of it that grows with the remaining angle,
+     * so the turn decays toward the target.
      */
-    public static float[] step(float baseYaw, float basePitch,
-                               float targetYaw, float targetPitch,
-                               double yawSpeed, double pitchSpeed,
-                               double interpolation, double deltaSeconds) {
-        float yawFactor = (float) (yawSpeed / 30.0D);
-        float pitchFactor = (float) (pitchSpeed / 30.0D);
+    public static double curveStep(float delta, double maxStep, String smoothing) {
+        double magnitude = Math.abs(delta);
+        if (magnitude < 1.0E-4D || maxStep <= 0.0D) return 0.0D;
 
-        float desiredYaw = baseYaw
-                + MathHelper.wrapAngleTo180_float(targetYaw - baseYaw) * yawFactor;
-        float desiredPitch = MathHelper.clamp_float(
-                basePitch + (targetPitch - basePitch) * pitchFactor, -90.0F, 90.0F);
+        double fraction = 1.0D;
+        if (SMOOTHING_EXPONENTIAL.equals(smoothing)) {
+            fraction = 1.0D - Math.exp(-magnitude / maxStep);
+        }
+        return Math.copySign(Math.min(magnitude, maxStep * Math.min(1.0D, fraction)), delta);
+    }
 
-        return interpolate(baseYaw, basePitch, desiredYaw, desiredPitch, interpolation, deltaSeconds);
+    /** One tick's movement toward a target, no further than the allowed step. */
+    public static float limitStep(float delta, double maxStep) {
+        if (maxStep <= 0.0D) return 0.0F;
+        if (Math.abs(delta) <= maxStep) return delta;
+        return (float) (delta > 0.0D ? maxStep : -maxStep);
+    }
+
+    /**
+     * Degrees the view turns per mouse count at the current sensitivity. Vanilla turns the
+     * mouse delta by {@code f^3 * 8} and then scales that by 0.15 in setAngles, so every
+     * look a real mouse can produce is a whole multiple of this value.
+     */
+    public static double mouseStep() {
+        Minecraft mc = Minecraft.getMinecraft();
+        if (mc.gameSettings == null) return 0.0D;
+        float f = mc.gameSettings.mouseSensitivity * 0.6F + 0.2F;
+        return (double) f * f * f * 1.2D;
+    }
+
+    /**
+     * Snaps a rotation to the steps a mouse produces at the current sensitivity. Server
+     * rotation checks compare every look delta against that step, so an aim that moves in
+     * fractional degrees reads as synthetic. Raven applies the same snap to every rotation
+     * it sends, which is why its aim passes without rotation flags.
+     */
+    public static float[] snapToMouse(float yaw, float pitch, float lastYaw, float lastPitch) {
+        double step = mouseStep();
+        if (step < 1.0E-4D) return new float[]{yaw, pitch};
+
+        double yawDelta = Math.round((yaw - lastYaw) / step) * step;
+        double pitchDelta = Math.round((pitch - lastPitch) / step) * step;
+        return new float[]{(float) (lastYaw + yawDelta),
+                MathHelper.clamp_float((float) (lastPitch + pitchDelta), -90.0F, 90.0F)};
     }
 
     public static float getYawChange(float targetYaw) {

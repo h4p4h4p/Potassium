@@ -1,16 +1,16 @@
 package com.potassium.module;
 
 import com.potassium.settings.BooleanSetting;
+import com.potassium.util.MovementInputStack;
 import net.minecraft.block.Block;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.entity.EntityPlayerSP;
-import net.minecraft.client.settings.GameSettings;
 import net.minecraft.entity.player.EntityPlayer;
 import net.minecraft.init.Blocks;
 import net.minecraft.util.AxisAlignedBB;
 import net.minecraft.util.BlockPos;
 import net.minecraft.util.MathHelper;
-import net.minecraft.util.MovementInputFromOptions;
+import net.minecraft.util.MovementInput;
 import net.minecraftforge.common.MinecraftForge;
 import net.minecraftforge.fml.common.eventhandler.SubscribeEvent;
 import net.minecraftforge.fml.common.gameevent.TickEvent;
@@ -49,11 +49,14 @@ public class NoSlow extends Module {
             // EntityPlayerSP applies its item-use slowdown after updatePlayerMoveState,
             // so installing the wrapper now gives the wrapper a chance to pre-scale it.
             if (isEnabled() && itemsSetting.getValue() && player instanceof EntityPlayerSP) {
-                installMovementInput((EntityPlayerSP) player);
+                MovementInputStack.install("NoSlow", MovementInputStack.PRIORITY_NO_SLOW,
+                        inner -> new NoSlowMovementInput(inner, this));
             }
             return;
         }
 
+        // The pre-scale is only needed for the player update, so nothing stays wrapped.
+        MovementInputStack.uninstall("NoSlow");
         if (!isEnabled()) return;
 
         // Items are handled by NoSlowMovementInput. Correcting motion here would
@@ -67,20 +70,6 @@ public class NoSlow extends Module {
             player.motionX *= 2.5D;
             player.motionZ *= 2.5D;
         }
-    }
-
-    private void installMovementInput(EntityPlayerSP player) {
-        if (player.movementInput instanceof NoSlowMovementInput) return;
-
-        NoSlowMovementInput input = new NoSlowMovementInput(mc.gameSettings, this);
-        if (player.movementInput != null) {
-            // Preserve the one-tick flags EntityPlayerSP reads before updatePlayerMoveState.
-            input.moveForward = player.movementInput.moveForward;
-            input.moveStrafe = player.movementInput.moveStrafe;
-            input.jump = player.movementInput.jump;
-            input.sneak = player.movementInput.sneak;
-        }
-        player.movementInput = input;
     }
 
     private boolean isInWeb(EntityPlayer player) {
@@ -124,18 +113,23 @@ public class NoSlow extends Module {
      * Leaving the wrapper installed is harmless: it delegates all state updates to
      * MovementInputFromOptions and only applies the correction while NoSlow is enabled.
      */
-    private static final class NoSlowMovementInput extends MovementInputFromOptions {
+    private static final class NoSlowMovementInput extends MovementInput {
 
+        private final MovementInput delegate;
         private final NoSlow module;
 
-        private NoSlowMovementInput(GameSettings gameSettings, NoSlow module) {
-            super(gameSettings);
+        private NoSlowMovementInput(MovementInput delegate, NoSlow module) {
+            this.delegate = delegate;
             this.module = module;
         }
 
         @Override
         public void updatePlayerMoveState() {
-            super.updatePlayerMoveState();
+            delegate.updatePlayerMoveState();
+            moveForward = delegate.moveForward;
+            moveStrafe = delegate.moveStrafe;
+            jump = delegate.jump;
+            sneak = delegate.sneak;
 
             if (!module.isEnabled() || !module.itemsSetting.getValue()) return;
 

@@ -3,7 +3,7 @@ package com.potassium.settings;
 import java.util.LinkedHashSet;
 import java.util.Set;
 
-/** A setting that stores any number of selected values from a fixed option list. */
+/** A setting that stores any number of selected values from an option list. */
 public class SelectSetting extends Setting {
 
     private final String[] options;
@@ -39,10 +39,19 @@ public class SelectSetting extends Setting {
     }
 
     private boolean containsOption(String option) {
-        for (String candidate : options) {
+        for (String candidate : getOptions()) {
             if (candidate.equals(option)) return true;
         }
         return false;
+    }
+
+    /**
+     * Whether a value from the config is a real option. The dropdown can offer a subset of the
+     * valid values (the HUD hider lists only enabled modules), so loading must not reject values
+     * just because they are not currently offered.
+     */
+    protected boolean isValidOption(String option) {
+        return containsOption(option);
     }
 
     @Override
@@ -61,7 +70,7 @@ public class SelectSetting extends Setting {
         if (value == null || value.isEmpty()) return;
         for (String option : value.split(",")) {
             option = option.trim();
-            if (containsOption(option)) selected.add(option);
+            if (isValidOption(option)) selected.add(option);
         }
     }
 }

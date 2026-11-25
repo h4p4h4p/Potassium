@@ -26,7 +26,7 @@ public class FastPlace extends Module {
     private final Minecraft mc = Minecraft.getMinecraft();
 
     public FastPlace() {
-        super("FastPlace", Category.COMBAT);
+        super("FastPlace", Category.PLAYER);
         settings.add(rangeSetting);
         settings.add(blocksOnlySetting);
         MinecraftForge.EVENT_BUS.register(this);
@@ -49,9 +49,12 @@ public class FastPlace extends Module {
         MovingObjectPosition over = mc.objectMouseOver;
         if (over != null && over.typeOfHit == MovingObjectPosition.MovingObjectType.BLOCK
                 && withinRange(over)) {
-            mc.playerController.onPlayerRightClick(mc.thePlayer, mc.theWorld, held,
-                    over.getBlockPos(), over.sideHit, over.hitVec);
-            mc.thePlayer.swingItem();
+            // Swing after the use, like vanilla: a placement with no arm animation is held
+            // against the player by the blockplace checks.
+            if (mc.playerController.onPlayerRightClick(mc.thePlayer, mc.theWorld, held,
+                    over.getBlockPos(), over.sideHit, over.hitVec)) {
+                mc.thePlayer.swingItem();
+            }
             ClickState.markUse(tick);
             return;
         }

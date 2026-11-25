@@ -2,13 +2,7 @@ package com.potassium.gui;
 
 import com.potassium.module.Esp;
 import com.potassium.module.Module;
-import com.potassium.settings.BooleanSetting;
-import com.potassium.settings.ColorSetting;
-import com.potassium.settings.ModeSetting;
 import com.potassium.settings.Setting;
-import com.potassium.settings.SelectSetting;
-import com.potassium.settings.SliderSetting;
-import com.potassium.settings.StringSetting;
 import com.potassium.util.RenderUtil;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.entity.EntityOtherPlayerMP;
@@ -17,7 +11,6 @@ import net.minecraft.client.renderer.RenderHelper;
 import net.minecraft.client.renderer.entity.RenderManager;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
-import org.lwjgl.opengl.GL11;
 
 import java.lang.reflect.Field;
 import java.util.ArrayList;
@@ -28,7 +21,7 @@ import java.util.Map;
 public class ModuleButton {
 
     private static final Logger LOGGER = LogManager.getLogger("Potassium");
-    private static final float ROW_HEIGHT = 14f;
+    private static final float ROW_HEIGHT = 13f;
     private static final float EXPAND_ZONE = 12f;
     public static final float PREVIEW_WIDTH = 88f;
     private static final float PREVIEW_MIN_HEIGHT = 74f;
@@ -40,6 +33,7 @@ public class ModuleButton {
     private final Minecraft mc = Minecraft.getMinecraft();
     private BindWidget bindWidget;
     private boolean expanded;
+    private boolean builtWhileFiltering;
     private EntityOtherPlayerMP previewPlayer;
 
     private float x;
@@ -83,13 +77,14 @@ public class ModuleButton {
         List<Setting> visible = new ArrayList<>();
         for (Setting setting : module.getSettings()) {
             if (!module.isSettingVisible(setting)) continue;
-            if (!search.matches(setting.getName())) continue;
+            if (!matchesSearch(setting, search)) continue;
             visible.add(setting);
         }
         // A module with no settings still needs its bind row, so an empty widget list
         // cannot be treated as already built while the bind widget is still missing.
         boolean needsBind = module.canBind() && bindWidget == null;
-        boolean same = !needsBind && builtSettings.size() == visible.size();
+        boolean same = !needsBind && builtSettings.size() == visible.size()
+                && builtWhileFiltering == search.isFiltering();
         if (same) {
             for (int i = 0; i < visible.size(); i++) {
                 if (builtSettings.get(i) != visible.get(i)) {
@@ -102,26 +97,39 @@ public class ModuleButton {
 
         widgets.clear();
         builtSettings.clear();
-        for (Setting setting : visible) {
-            if (setting instanceof SliderSetting) {
-                widgets.add(new SliderWidget((SliderSetting) setting));
-            } else if (setting instanceof BooleanSetting) {
-                widgets.add(new BooleanWidget((BooleanSetting) setting));
-            } else if (setting instanceof ModeSetting) {
-                widgets.add(new ModeWidget((ModeSetting) setting));
-            } else if (setting instanceof ColorSetting) {
-                widgets.add(new ColorWidget((ColorSetting) setting));
-            } else if (setting instanceof StringSetting) {
-                widgets.add(new StringWidget((StringSetting) setting));
-            } else if (setting instanceof SelectSetting) {
-                widgets.add(new SelectWidget((SelectSetting) setting));
+        builtWhileFiltering = search.isFiltering();
+        for (int i = 0; i < visible.size(); i++) {
+            Setting setting = visible.get(i);
+            String group = setting.getGroup();
+            if (group == null) {
+                addSettingWidget(setting);
+                continue;
             }
-            builtSettings.add(setting);
+            int end = i + 1;
+            while (end < visible.size() && group.equals(visible.get(end).getGroup())) end++;
+            SettingsDropdown dropdown = new SettingsDropdown(
+                    module.getName(), group, visible.subList(i, end));
+            dropdown.setForcedExpanded(search.isFiltering());
+            widgets.add(dropdown);
+            i = end - 1;
         }
+        builtSettings.addAll(visible);
         if (module.canBind()) {
             bindWidget = new BindWidget(module);
             widgets.add(bindWidget);
         }
+    }
+
+    private void addSettingWidget(Setting setting) {
+        Widget widget = Widget.forSetting(setting);
+        if (widget != null) widgets.add(widget);
+    }
+
+    private boolean matchesSearch(Setting setting, SearchField search) {
+        if (search == null || !search.isFiltering()) return true;
+        if (search.matches(setting.getName())) return true;
+        String group = setting.getGroup();
+        return group != null && search.matches(group);
     }
 
     public boolean isExpanded() {
@@ -132,7 +140,7 @@ public class ModuleButton {
     public boolean matchesFilter(SearchField search) {
         if (search == null || !search.isFiltering()) return true;
         for (Setting setting : module.getSettings()) {
-            if (module.isSettingVisible(setting) && search.matches(setting.getName())) return true;
+            if (module.isSettingVisible(setting) && matchesSearch(setting, search)) return true;
         }
         return false;
     }
@@ -152,26 +160,32 @@ public class ModuleButton {
     public void draw(float mx, float my) {
         refreshWidgets();
         boolean hovered = mx >= x && mx <= x + width && my >= y && my <= y + ROW_HEIGHT;
+        // Rows bleed to the panel's full width, the way the reference highlights them; the
+        // scrollbar gutter is still part of the row's fill.
+        float full = panel.getWidth();
 
         if (module.isEnabled()) {
-            RenderUtil.drawRect(x, y, 2, ROW_HEIGHT, Theme.ACCENT);
+            RenderUtil.drawRect(x, y, full, ROW_HEIGHT, Theme.ACCENT);
         }
-
         if (hovered) {
-            RenderUtil.drawRect(x + 2, y, width - 2, ROW_HEIGHT, Theme.HOVER);
+            RenderUtil.drawRect(x, y, full, ROW_HEIGHT, Theme.HOVER);
         }
 
         int textColor = module.isEnabled() ? Theme.TEXT : Theme.TEXT_GRAY;
-        RenderUtil.drawString(module.getName(), x + 7, y + (ROW_HEIGHT - RenderUtil.getTextHeight()) / 2f, textColor);
+        RenderUtil.drawGuiString(module.getName(), x + 7, RenderUtil.guiTextY(y, ROW_HEIGHT), textColor);
 
-        String indicator = "+";
-        RenderUtil.drawString(indicator, x + width - 4 - RenderUtil.getTextWidth(indicator),
-                y + (ROW_HEIGHT - RenderUtil.getTextHeight()) / 2f, hovered ? Theme.TEXT : Theme.TEXT_GRAY);
+        // The expander only appears under the cursor; at rest the rows stay as clean as the
+        // reference, which shows nothing on the right.
+        if (hovered) {
+            String indicator = expanded ? "-" : "+";
+            RenderUtil.drawGuiString(indicator, x + width - 5 - RenderUtil.getGuiTextWidth(indicator),
+                    RenderUtil.guiTextY(y, ROW_HEIGHT), module.isEnabled() ? 0xFFFFFFFF : Theme.TEXT_GRAY);
+        }
 
         if (expanded) {
             float wh = Math.max(widgetsHeight(), getPreviewMinHeight());
             boolean preview = hasSidePreview();
-            RenderUtil.drawRect(x, y + ROW_HEIGHT, width, wh, Theme.BODY_BG);
+            RenderUtil.drawRect(x, y + ROW_HEIGHT, full, wh, Theme.BODY_BG);
 
             float bodyRight = x + width - 4;
             float pw = PREVIEW_WIDTH;
@@ -188,9 +202,9 @@ public class ModuleButton {
                 RenderUtil.drawRect(px - 5, y + ROW_HEIGHT, 1, wh, Theme.SEPARATOR);
                 drawEspPreview((Esp) module, px, y + ROW_HEIGHT, pw, wh);
             }
-            RenderUtil.drawRect(x + 4, y + ROW_HEIGHT + wh - 1, width - 8, 1, Theme.SEPARATOR);
+            RenderUtil.drawRect(x, y + ROW_HEIGHT + wh - 1, full, 1, Theme.SEPARATOR);
         } else {
-            RenderUtil.drawRect(x + 4, y + ROW_HEIGHT - 1, width - 8, 1, Theme.SEPARATOR);
+            RenderUtil.drawRect(x, y + ROW_HEIGHT - 1, full, 1, Theme.SEPARATOR);
         }
     }
 
@@ -207,7 +221,9 @@ public class ModuleButton {
         float bottom = py + ph - 4f;
         float scale = (bottom - top) / 1.8f;
 
-        boolean depthWas = GL11.glIsEnabled(GL11.GL_DEPTH_TEST);
+        // The model is rendered inside the GUI pass: depth, lighting, texture and cull all
+        // change here, so save them and give the renderer back the state it had.
+        RenderUtil.GlState glState = RenderUtil.saveGlState();
 
         GlStateManager.enableColorMaterial();
         GlStateManager.enableRescaleNormal();
@@ -217,19 +233,13 @@ public class ModuleButton {
         GlStateManager.rotate(180.0F, 0.0F, 0.0F, 1.0F);
         GlStateManager.rotate(135.0F, 0.0F, 1.0F, 0.0F);
         RenderHelper.enableStandardItemLighting();
-        if (!depthWas) GlStateManager.enableDepth();
+        if (!glState.isDepthTest()) GlStateManager.enableDepth();
         mc.getRenderManager().renderEntityWithPosYaw(player, 0.0D, 0.0D, 0.0D, 0.0F, 1.0F);
         RenderHelper.disableStandardItemLighting();
 
         GlStateManager.popMatrix();
         GlStateManager.disableRescaleNormal();
         GlStateManager.disableColorMaterial();
-
-        if (depthWas) {
-            GlStateManager.enableDepth();
-        } else {
-            GlStateManager.disableDepth();
-        }
 
         float h = bottom - top;
         float w = h * 0.5f;
@@ -252,8 +262,10 @@ public class ModuleButton {
         }
         if (esp.getPreviewNames()) {
             String name = "[Steve]";
-            RenderUtil.drawString(name, cx - RenderUtil.getTextWidth(name) / 2f, top - 11f, esp.getPreviewNameColor());
+            RenderUtil.drawGuiString(name, cx - RenderUtil.getGuiTextWidth(name) / 2f, top - 11f, esp.getPreviewNameColor());
         }
+
+        RenderUtil.restoreGlState(glState);
     }
 
     private EntityOtherPlayerMP getPreviewEntity() {

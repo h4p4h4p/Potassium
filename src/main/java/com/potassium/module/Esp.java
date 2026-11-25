@@ -2,10 +2,14 @@ package com.potassium.module;
 
 import com.potassium.settings.BooleanSetting;
 import com.potassium.settings.ColorSetting;
+import com.potassium.settings.ModeSetting;
 import com.potassium.settings.Setting;
+import com.potassium.settings.SliderSetting;
 import com.potassium.util.RenderUtil;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.ScaledResolution;
+import net.minecraft.client.renderer.GlStateManager;
+import net.minecraft.client.renderer.Tessellator;
 import net.minecraft.entity.Entity;
 import net.minecraft.util.AxisAlignedBB;
 import net.minecraft.util.MovingObjectPosition;
@@ -25,13 +29,24 @@ import java.util.List;
 
 public class Esp extends Module {
 
-    private static final int MAX_QUADS = 16384;
+    public static final String MODE_2D = "2D";
+    public static final String MODE_3D = "3D";
 
+    private static final int MAX_QUADS = 16384;
+    private static final int FILL_ALPHA = 100;
+    private static final double NEAR_CAMERA_MARGIN = 0.2D;
+    /** The same padding Blink draws its anchor box with, so both boxes read as one size. */
+    private static final double BOX_PADDING = 0.1D;
+
+    private final ModeSetting modeSetting = new ModeSetting("Mode",
+            new String[]{MODE_2D, MODE_3D}, 1);
     private final BooleanSetting cornersSetting = new BooleanSetting("Corners", false);
     private final BooleanSetting namesSetting = new BooleanSetting("Names", true);
     private final BooleanSetting legitSetting = new BooleanSetting("LegitESP", false);
     private final ColorSetting colorSetting = new ColorSetting("Color", 0xFF1B395C);
     private final ColorSetting nameColorSetting = new ColorSetting("Name Color", 0xFFFFFFFF);
+    private final BooleanSetting throughWallsSetting = new BooleanSetting("Through Walls", true);
+    private final SliderSetting rangeSetting = new SliderSetting("Range", 64, 8, 256, 1);
 
     private final Minecraft mc = Minecraft.getMinecraft();
 
@@ -58,16 +73,21 @@ public class Esp extends Module {
 
     public Esp() {
         super("ESP", Category.RENDER);
+        settings.add(modeSetting);
         settings.add(cornersSetting);
         settings.add(namesSetting);
         settings.add(legitSetting);
         settings.add(colorSetting);
         settings.add(nameColorSetting);
+        settings.add(throughWallsSetting);
+        settings.add(rangeSetting);
         MinecraftForge.EVENT_BUS.register(this);
     }
 
     @Override
     public boolean isSettingVisible(Setting setting) {
+        if (setting == cornersSetting) return MODE_2D.equals(modeSetting.getValue());
+        if (setting == throughWallsSetting) return MODE_3D.equals(modeSetting.getValue());
         if (setting == nameColorSetting) return namesSetting.getValue();
         return true;
     }
@@ -96,6 +116,7 @@ public class Esp extends Module {
         nameCount = 0;
         if (!captureMatrices()) return;
         collect2D(event.partialTicks);
+        if (MODE_3D.equals(modeSetting.getValue())) render3D(event.partialTicks);
     }
 
     @SubscribeEvent
@@ -109,7 +130,8 @@ public class Esp extends Module {
             int nameColor = nameColorSetting.getValue();
             for (int i = 0; i < nameCount; i++) {
                 String text = nameTexts[i];
-                RenderUtil.drawString(text, nameXs[i] - RenderUtil.getTextWidth(text) * 0.5f, nameYs[i] - 9f, nameColor);
+                RenderUtil.drawGuiString(text, nameXs[i] - RenderUtil.getGuiTextWidth(text) * 0.5f,
+                        nameYs[i] - RenderUtil.getGuiTextHeight(), nameColor);
             }
         }
     }
@@ -124,6 +146,57 @@ public class Esp extends Module {
     }
 
     
+
+    /**
+     * World-space boxes the size of the entity's real hitbox, so the outline matches
+     * what the server and vanilla ray tracing use rather than an enlarged test box.
+     */
+    private void render3D(float partialTicks) {
+        double camX = mc.getRenderManager().viewerPosX;
+        double camY = mc.getRenderManager().viewerPosY;
+        double camZ = mc.getRenderManager().viewerPosZ;
+        int color = colorSetting.getValue();
+        int r = (color >> 16) & 0xFF;
+        int g = (color >> 8) & 0xFF;
+        int b = color & 0xFF;
+        int outlineAlpha = (color >>> 24) & 0xFF;
+
+        GlStateManager.disableTexture2D();
+        GlStateManager.enableBlend();
+        GlStateManager.disableCull();
+        GlStateManager.tryBlendFuncSeparate(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA, 1, 0);
+        if (throughWallsSetting.getValue()) GlStateManager.disableDepth();
+
+        Tessellator tessellator = Tessellator.getInstance();
+        for (Entity entity : mc.theWorld.playerEntities) {
+            if (entity == mc.thePlayer) continue;
+            if (AntiBot.isBot(entity)) continue;
+            if (!inRange(entity, camX, camY, camZ)) continue;
+            if (legitSetting.getValue() && !isEntityVisible(entity, camX, camY, camZ)) continue;
+
+            double ox = entity.lastTickPosX + (entity.posX - entity.lastTickPosX) * partialTicks - entity.posX;
+            double oy = entity.lastTickPosY + (entity.posY - entity.lastTickPosY) * partialTicks - entity.posY;
+            double oz = entity.lastTickPosZ + (entity.posZ - entity.lastTickPosZ) * partialTicks - entity.posZ;
+
+            // The unmodified entity box is the player's actual 0.6 x 1.8 hitbox, grown by
+            // Blink's padding so the ESP and the anchor marker are the same size.
+            AxisAlignedBB box = entity.getEntityBoundingBox()
+                    .offset(ox, oy, oz).expand(BOX_PADDING, BOX_PADDING, BOX_PADDING);
+            if (RenderUtil.pointNearBox(camX, camY, camZ, box, NEAR_CAMERA_MARGIN)) continue;
+
+            RenderUtil.drawFilledBox(tessellator,
+                    box.minX - camX, box.minY - camY, box.minZ - camZ,
+                    box.maxX - camX, box.maxY - camY, box.maxZ - camZ,
+                    r, g, b, FILL_ALPHA);
+            RenderUtil.drawOutlinedBox(tessellator,
+                    box.offset(-camX, -camY, -camZ), r, g, b, outlineAlpha);
+        }
+
+        if (throughWallsSetting.getValue()) GlStateManager.enableDepth();
+        GlStateManager.enableCull();
+        GlStateManager.disableBlend();
+        GlStateManager.enableTexture2D();
+    }
 
     private boolean captureMatrices() {
         if (mvBuf == null) {
@@ -175,6 +248,7 @@ public class Esp extends Module {
             Entity entity = players.get(i);
             if (entity == mc.thePlayer) continue;
             if (AntiBot.isBot(entity)) continue;
+            if (!inRange(entity, camX, camY, camZ)) continue;
             if (legit && !isEntityVisible(entity, camX, camY, camZ)) continue;
             AxisAlignedBB bb = entity.getEntityBoundingBox();
 
@@ -201,7 +275,7 @@ public class Esp extends Module {
             float rw = (float) (w / scale);
             float rh = (float) (h / scale);
 
-            addRect(x, y, rw, rh);
+            if (MODE_2D.equals(modeSetting.getValue())) addRect(x, y, rw, rh);
             if (showNames) storeName(entity.getName(), headScratch[0], headScratch[1]);
         }
     }
@@ -274,6 +348,15 @@ public class Esp extends Module {
         out[0] = (ndcX + 1.0D) * 0.5D * vw;
         out[1] = (ndcY + 1.0D) * 0.5D * vh;
         return true;
+    }
+
+    /** Squared distance from the camera to the entity's centre; Range is in blocks. */
+    private boolean inRange(Entity entity, double camX, double camY, double camZ) {
+        double dx = entity.posX - camX;
+        double dy = entity.posY + entity.height * 0.5D - camY;
+        double dz = entity.posZ - camZ;
+        double range = rangeSetting.getValue();
+        return dx * dx + dy * dy + dz * dz <= range * range;
     }
 
     private boolean isEntityVisible(Entity entity, double camX, double camY, double camZ) {

@@ -27,7 +27,7 @@ public class AutoArmor extends Module {
     private long lastAction;
 
     public AutoArmor() {
-        super("AutoArmor", Category.COMBAT);
+        super("AutoArmor", Category.PLAYER);
         settings.add(delaySetting);
         MinecraftForge.EVENT_BUS.register(this);
     }

@@ -50,13 +50,14 @@ public class SliderWidget extends Widget implements TextInput {
 
         boolean hovered = contains(mx, my);
         computeTrack();
-        float valueX = x + width - 6 - RenderUtil.getTextWidth(display());
+        float valueX = x + width - 6 - RenderUtil.getGuiTextWidth(display());
 
         if (capturing) {
-            RenderUtil.drawRect(valueX - 3, y + 1, RenderUtil.getTextWidth(display()) + 6, height - 2, 0x40219609);
+            RenderUtil.drawRect(valueX - 3, y + 1, RenderUtil.getGuiTextWidth(display()) + 6, height - 2,
+                    (0x40 << 24) | (Theme.ACCENT & 0xFFFFFF));
         }
 
-        RenderUtil.drawString(setting.getName(), x + 6, y + 4, hovered ? Theme.TEXT : Theme.TEXT_GRAY);
+        RenderUtil.drawGuiString(setting.getName(), x + 6, RenderUtil.guiTextY(y, height), hovered ? Theme.TEXT : Theme.TEXT_GRAY);
         drawModifiedMarker(!setting.isDefault(), setting.getName());
 
         double range = setting.getMax() - setting.getMin();
@@ -76,9 +77,9 @@ public class SliderWidget extends Widget implements TextInput {
         RenderUtil.drawRect(knobX, y + height / 2f - 4f, knobSize, 8, Theme.KNOB);
 
         String value = display();
-        RenderUtil.drawString(value, valueX, y + 4, capturing ? MARKER : Theme.ACCENT);
+        RenderUtil.drawGuiString(value, valueX, RenderUtil.guiTextY(y, height), capturing ? MARKER : Theme.ACCENT);
         if (capturing && (System.currentTimeMillis() / 450L) % 2 == 0) {
-            RenderUtil.drawRect(valueX + RenderUtil.getTextWidth(value) + 1, y + 3, 1, RenderUtil.getTextHeight(), MARKER);
+            RenderUtil.drawRect(valueX + RenderUtil.getGuiTextWidth(value) + 1, RenderUtil.guiTextY(y, height), 1, RenderUtil.getGuiTextHeight(), MARKER);
         }
     }
 
@@ -111,10 +112,10 @@ public class SliderWidget extends Widget implements TextInput {
     }
 
     private void computeTrack() {
-        float labelZone = RenderUtil.getTextWidth(setting.getName()) + 10;
+        float labelZone = RenderUtil.getGuiTextWidth(setting.getName()) + 10;
         if (!setting.isDefault()) labelZone += 7;
         trackX = x + labelZone;
-        float maxVw = Math.max(RenderUtil.getTextWidth(formatMaxValue()), RenderUtil.getTextWidth(display()));
+        float maxVw = Math.max(RenderUtil.getGuiTextWidth(formatMaxValue()), RenderUtil.getGuiTextWidth(display()));
         trackW = Math.max((x + width - 12 - maxVw) - trackX, 4);
     }
 
@@ -126,8 +127,8 @@ public class SliderWidget extends Widget implements TextInput {
     @Override
     public float getPreferredWidth() {
         float marker = setting.isDefault() ? 0 : 7;
-        float valueWidth = Math.max(RenderUtil.getTextWidth(formatMaxValue()), RenderUtil.getTextWidth(display()));
-        return Math.max(110, RenderUtil.getTextWidth(setting.getName()) + marker + 10 + 48 + valueWidth + 10);
+        float valueWidth = Math.max(RenderUtil.getGuiTextWidth(formatMaxValue()), RenderUtil.getGuiTextWidth(display()));
+        return Math.max(110, RenderUtil.getGuiTextWidth(setting.getName()) + marker + 10 + 48 + valueWidth + 10);
     }
 
     private boolean onTrack(float mx, float my) {
@@ -167,7 +168,7 @@ public class SliderWidget extends Widget implements TextInput {
     @Override
     public boolean hitsTextField(float mx, float my) {
         String shown = formatValue();
-        float vw = RenderUtil.getTextWidth(shown);
+        float vw = RenderUtil.getGuiTextWidth(shown);
         float vx = x + width - 6 - vw;
         return mx >= vx - 3 && mx <= x + width - 3 && my >= y && my <= y + height;
     }

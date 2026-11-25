@@ -12,8 +12,13 @@ public class Panel {
 
     private static final float HEADER_HEIGHT = 16f;
     private static final float DEFAULT_WIDTH = 122f;
+    /**
+     * Empty space trimmed from the column's right edge. The old value was 16; the extra 16
+     * makes the module lists the requested 16 px skinnier without touching their left inset.
+     */
+    private static final float RIGHT_TRIM = 32f;
     private static final float SCROLLBAR_W = 3f;
-    private static final float WHEEL_STEP = 14f;
+    private static final float WHEEL_STEP = 12f;
 
     private final Category category;
     private final ClickGUI gui;
@@ -25,6 +30,7 @@ public class Panel {
     private float scroll;
 
     private boolean draggingHeader;
+    private boolean manuallyMoved;
     private float dragOffsetX;
     private float dragOffsetY;
 
@@ -36,7 +42,11 @@ public class Panel {
     public Panel(Category category, ClickGUI gui) {
         this.category = category;
         this.gui = gui;
-        for (Module module : gui.getClient().moduleManager.getModulesInCategory(category)) {
+        List<Module> modules = new ArrayList<>(
+                gui.getClient().moduleManager.getModulesInCategory(category));
+        // Alphabetical, case-insensitive: registration order left the columns jumbled.
+        modules.sort((a, b) -> a.getName().compareToIgnoreCase(b.getName()));
+        for (Module module : modules) {
             buttons.add(new ModuleButton(module, this));
         }
     }
@@ -85,7 +95,9 @@ public class Panel {
     }
 
     private float bodyWidth() {
-        return hasScrollbar() ? getWidth() - SCROLLBAR_W - 2f : getWidth();
+        // Always keep the scrollbar gutter reserved. Otherwise the first expansion that
+        // makes this panel scroll narrows every row by 5 px and the whole list shifts.
+        return getWidth() - SCROLLBAR_W - 2f;
     }
 
     /**
@@ -95,16 +107,19 @@ public class Panel {
     public float getBaseWidth() {
         float w = DEFAULT_WIDTH;
         for (ModuleButton button : visibleButtons()) {
-            float bw = RenderUtil.getTextWidth(button.getModule().getName());
-            float bindW = button.getBindWidget() == null ? 0 : RenderUtil.getTextWidth(button.getBindWidget().keyName());
+            float bw = RenderUtil.getGuiTextWidth(button.getModule().getName());
+            float bindW = button.getBindWidget() == null ? 0 : RenderUtil.getGuiTextWidth(button.getBindWidget().keyName());
             bw += bindW + 36;
             for (Widget widget : button.getWidgets()) {
                 bw = Math.max(bw, widget.getPreferredWidth() + 8);
             }
             w = Math.max(w, bw);
         }
+        // A long category name such as CONFIGURATION can outgrow a column sized only by its
+        // module rows.
+        w = Math.max(w, RenderUtil.getGuiTextWidth(category.getName().toUpperCase()) + 24f + RIGHT_TRIM);
         if (hasScrollbar()) w += SCROLLBAR_W + 2f;
-        return w;
+        return Math.max(0f, w - RIGHT_TRIM);
     }
 
     /** Full width this panel needs, including the preview column of an expanded module. */
@@ -156,6 +171,7 @@ public class Panel {
 
     public void startHeaderDrag(float mx, float my) {
         draggingHeader = true;
+        manuallyMoved = true;
         dragOffsetX = mx - x;
         dragOffsetY = my - y;
     }
@@ -177,6 +193,15 @@ public class Panel {
 
     public boolean isDragging() {
         return draggingHeader;
+    }
+
+    /** True while the header has been dragged; the wrap layout then leaves the panel where it is. */
+    public boolean hasManualPosition() {
+        return manuallyMoved;
+    }
+
+    public void resetManualPosition() {
+        manuallyMoved = false;
     }
 
     public void toggleCollapsed() {
@@ -211,9 +236,8 @@ public class Panel {
     public TextInput getCapturingText() {
         for (ModuleButton button : buttons) {
             for (Widget widget : button.getWidgets()) {
-                if (widget instanceof TextInput && ((TextInput) widget).isTextCapturing()) {
-                    return (TextInput) widget;
-                }
+                TextInput input = widget.getCapturingText();
+                if (input != null) return input;
             }
         }
         return null;
@@ -227,17 +251,18 @@ public class Panel {
 
         float height = getHeight();
         float width = getWidth();
-        RenderUtil.drawRect(x - 1, y - 1, width + 2, 1, Theme.PANEL_BORDER);
-        RenderUtil.drawRect(x - 1, y + height, width + 2, 1, Theme.PANEL_BORDER);
-        RenderUtil.drawRect(x - 1, y - 1, 1, height + 2, Theme.PANEL_BORDER);
-        RenderUtil.drawRect(x + width, y - 1, 1, height + 2, Theme.PANEL_BORDER);
         RenderUtil.drawRect(x, y, width, height, Theme.PANEL_BG);
         RenderUtil.drawRect(x, y, width, HEADER_HEIGHT, Theme.HEADER_BG);
+        if (mx >= x && mx <= x + width && my >= y && my <= y + HEADER_HEIGHT) {
+            RenderUtil.drawRect(x, y, width, HEADER_HEIGHT, 0x0CFFFFFF);
+        }
 
-        RenderUtil.drawString(category.getName().toUpperCase(), x + 7, y + (HEADER_HEIGHT - RenderUtil.getTextHeight()) / 2f, Theme.TEXT);
-        RenderUtil.drawString(collapsed ? "+" : "-", x + width - 12, y + (HEADER_HEIGHT - RenderUtil.getTextHeight()) / 2f, Theme.TEXT_GRAY);
-
-        RenderUtil.drawRect(x + 6, y + HEADER_HEIGHT - 1, width - 12, 1, 0xAA00CFFF);
+        RenderUtil.drawGuiStringBold(category.getName(), x + 8, RenderUtil.guiTextY(y, HEADER_HEIGHT), Theme.TEXT);
+        // Module count on the right, the reference header's only furniture. Clicking it still
+        // collapses the panel, so no +/- glyph is needed.
+        String count = String.valueOf(visibleButtons().size());
+        RenderUtil.drawGuiString(count, x + width - 8 - RenderUtil.getGuiTextWidth(count),
+                RenderUtil.guiTextY(y, HEADER_HEIGHT), Theme.TEXT_FAINT);
 
         if (collapsed) return;
 
@@ -245,6 +270,10 @@ public class Panel {
         float view = viewHeight();
         float inner = bodyWidth();
         float by = bodyTop - scroll;
+        // A scrolled row sticks out above the body; without clipping that sliver is drawn
+        // last, on top of the category header.
+        boolean clipped = view > 0f;
+        if (clipped) RenderUtil.enableScissor(x, bodyTop, width, view, ClickGUI.pixelsPerUnit());
         for (ModuleButton button : visibleButtons()) {
             float bh = button.getHeight();
             if (by + bh > bodyTop && by < bodyTop + view) {
@@ -253,6 +282,7 @@ public class Panel {
             }
             by += bh;
         }
+        if (clipped) RenderUtil.disableScissor();
 
         if (hasScrollbar()) drawScrollbar(view);
     }
@@ -265,7 +295,8 @@ public class Panel {
         float thumbH = Math.max(18f, view * (view / content));
         float t = maxScroll() <= 0f ? 0f : scroll / maxScroll();
         float thumbY = trackTop + t * (view - thumbH);
-        RenderUtil.drawRect(x + getWidth() - SCROLLBAR_W - 1, thumbY, SCROLLBAR_W, thumbH, 0xAA33D6FF);
+        RenderUtil.drawRect(x + getWidth() - SCROLLBAR_W - 1, thumbY, SCROLLBAR_W, thumbH,
+                (0x88 << 24) | (Theme.ACCENT & 0xFFFFFF));
     }
 
     private void updateScrollbarDrag(float my) {

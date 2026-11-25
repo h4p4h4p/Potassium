@@ -14,7 +14,7 @@ public class BooleanWidget extends Widget {
 
     @Override
     public void draw(float mx, float my) {
-        RenderUtil.drawString(setting.getName(), x + 6, y + 4, Theme.TEXT_GRAY);
+        RenderUtil.drawGuiString(setting.getName(), x + 6, RenderUtil.guiTextY(y, height), Theme.TEXT_GRAY);
         drawModifiedMarker(!setting.isDefault(), setting.getName());
 
         float sw = 18;
@@ -23,7 +23,7 @@ public class BooleanWidget extends Widget {
         float sy = y + height / 2f - sh / 2f;
 
         boolean enabled = setting.getValue();
-        RenderUtil.drawRoundedRect(sx, sy, sw, sh, 2.5f, enabled ? Theme.ACCENT : 0xFF333333);
+        RenderUtil.drawRoundedRect(sx, sy, sw, sh, 2.5f, enabled ? Theme.ACCENT : Theme.TOGGLE_OFF);
 
         float dot = 5;
         float dx = sx + (enabled ? sw - dot - 1 : 1);
@@ -32,7 +32,7 @@ public class BooleanWidget extends Widget {
 
     @Override
     public float getPreferredWidth() {
-        return Math.max(110, RenderUtil.getTextWidth(setting.getName()) + 6 + 18 + 6 + 6);
+        return Math.max(110, RenderUtil.getGuiTextWidth(setting.getName()) + 6 + 18 + 6 + 6);
     }
 
     @Override

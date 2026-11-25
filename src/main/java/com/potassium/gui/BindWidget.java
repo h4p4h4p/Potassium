@@ -16,7 +16,7 @@ public class BindWidget extends Widget {
 
     @Override
     public void draw(float mx, float my) {
-        RenderUtil.drawString("Keybind", x + 6, y + 4, Theme.TEXT_GRAY);
+        RenderUtil.drawGuiString("Keybind", x + 6, RenderUtil.guiTextY(y, height), Theme.TEXT_GRAY);
 
         String value;
         int color;
@@ -29,8 +29,8 @@ public class BindWidget extends Widget {
             color = module.isEnabled() ? Theme.ACCENT : Theme.TEXT_GRAY;
         }
 
-        int vw = RenderUtil.getTextWidth(value);
-        RenderUtil.drawString(value, x + width - 6 - vw, y + 4, color);
+        float vw = RenderUtil.getGuiTextWidth(value);
+        RenderUtil.drawGuiString(value, x + width - 6 - vw, RenderUtil.guiTextY(y, height), color);
     }
 
     @Override
@@ -65,9 +65,9 @@ public class BindWidget extends Widget {
     @Override
     public float getPreferredWidth() {
         String longest = "Listening...";
-        if (RenderUtil.getTextWidth(keyName()) > RenderUtil.getTextWidth(longest)) {
+        if (RenderUtil.getGuiTextWidth(keyName()) > RenderUtil.getGuiTextWidth(longest)) {
             longest = keyName();
         }
-        return Math.max(110, RenderUtil.getTextWidth("Keybind") + RenderUtil.getTextWidth(longest) + 24);
+        return Math.max(110, RenderUtil.getGuiTextWidth("Keybind") + RenderUtil.getGuiTextWidth(longest) + 24);
     }
 }

@@ -20,6 +20,7 @@ import net.minecraftforge.client.event.RenderWorldLastEvent;
 import net.minecraftforge.common.MinecraftForge;
 import net.minecraftforge.fml.common.eventhandler.SubscribeEvent;
 import net.minecraftforge.fml.common.gameevent.TickEvent;
+import org.lwjgl.opengl.GL11;
 
 import java.util.ArrayDeque;
 
@@ -122,7 +123,12 @@ public class Blink extends Module {
         int b = Theme.ACCENT & 0xFF;
         int a = 255;
 
+        // Drawn the same way as the 3D ESP: a translucent fill under the outline.
         GlStateManager.disableTexture2D();
+        GlStateManager.enableBlend();
+        GlStateManager.disableCull();
+        GlStateManager.tryBlendFuncSeparate(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA, 1, 0);
+
         Tessellator tessellator = Tessellator.getInstance();
         double pad = 0.1D;
         AxisAlignedBB box = AxisAlignedBB.fromBounds(
@@ -132,7 +138,14 @@ public class Blink extends Module {
                 bb.maxX - mc.thePlayer.posX + ax - camX + pad,
                 bb.maxY - mc.thePlayer.posY + ay - camY + pad,
                 bb.maxZ - mc.thePlayer.posZ + az - camZ + pad);
+        RenderUtil.drawFilledBox(tessellator,
+                box.minX, box.minY, box.minZ,
+                box.maxX, box.maxY, box.maxZ,
+                r, g, b, 100);
         RenderUtil.drawOutlinedBox(tessellator, box, r, g, b, a);
+
+        GlStateManager.enableCull();
+        GlStateManager.disableBlend();
         GlStateManager.enableTexture2D();
     }
 

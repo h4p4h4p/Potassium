@@ -6,6 +6,7 @@ import io.netty.channel.Channel;
 import io.netty.channel.ChannelDuplexHandler;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelPromise;
+import net.minecraft.block.Block;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.entity.EntityPlayerSP;
 import net.minecraft.client.multiplayer.WorldClient;
@@ -13,6 +14,9 @@ import net.minecraft.network.NetworkManager;
 import net.minecraft.network.Packet;
 import net.minecraft.network.play.client.C03PacketPlayer;
 import net.minecraft.network.play.server.S08PacketPlayerPosLook;
+import net.minecraft.util.AxisAlignedBB;
+import net.minecraft.util.BlockPos;
+import net.minecraft.util.MathHelper;
 import net.minecraft.util.MovingObjectPosition;
 import net.minecraft.util.Vec3;
 import net.minecraftforge.common.MinecraftForge;
@@ -44,6 +48,12 @@ public class AntiVoid extends Module {
     private static final double FLAG_DISTANCE = 101.0D;
     private static final int BLINK_HOLD_TICKS = 10;
     private static final double POSITION_EPSILON_SQ = 1.0E-8D;
+
+    // The void check reads the world under the player from 3 to 60 blocks down. A fall with
+    // nothing solid or liquid anywhere in that window is going somewhere no ledge will catch
+    // it, which is the only time a rescue cannot yank the player out of a fall they survive.
+    private static final int VOID_SCAN_NEAR = 3;
+    private static final int VOID_SCAN_FAR = 60;
 
     private final ModeSetting modeSetting = new ModeSetting("Mode",
             new String[]{MODE_FLAG, MODE_BLINK}, 0);
@@ -147,6 +157,7 @@ public class AntiVoid extends Module {
     private void tickFlag(EntityPlayerSP player) {
         if (flagSent) return;
         if (player.fallDistance < maxFallDistanceSetting.getValue()) return;
+        if (!isFallingIntoVoid(player)) return;
         if (mc.getNetHandler() == null) return;
 
         flagSent = true;
@@ -191,6 +202,8 @@ public class AntiVoid extends Module {
      * consider the last ground position current.
      */
     private boolean shouldStartBlink(EntityPlayerSP player) {
+        if (!isFallingIntoVoid(player)) return false;
+
         double maxDistance = maxFallDistanceSetting.getValue();
         if (player.fallDistance >= maxDistance) return true;
 
@@ -240,6 +253,37 @@ public class AntiVoid extends Module {
             mc.getNetHandler().addToSendQueue(new C03PacketPlayer.C04PacketPlayerPosition(
                     safeX, safeY, safeZ, true));
         }
+    }
+
+    /**
+     * A long fall only needs catching when it actually ends in nothing. Reads every block column
+     * under the player's footprint from 3 to 60 blocks down: a solid block or a liquid anywhere
+     * in that window ends the fall somewhere, so the fall is left alone. Only a downward fall
+     * with an empty window is treated as a void fall.
+     */
+    private boolean isFallingIntoVoid(EntityPlayerSP player) {
+        if (player.motionY >= 0.0D) return false;
+        if (mc.theWorld == null) return false;
+
+        AxisAlignedBB box = player.getEntityBoundingBox();
+        int minX = MathHelper.floor_double(box.minX);
+        int maxX = MathHelper.floor_double(box.maxX);
+        int minZ = MathHelper.floor_double(box.minZ);
+        int maxZ = MathHelper.floor_double(box.maxZ);
+        int top = MathHelper.floor_double(box.minY) - VOID_SCAN_NEAR;
+        int bottom = MathHelper.floor_double(box.minY) - VOID_SCAN_FAR;
+
+        for (int x = minX; x <= maxX; x++) {
+            for (int z = minZ; z <= maxZ; z++) {
+                for (int y = top; y >= bottom; y--) {
+                    Block block = mc.theWorld.getBlockState(new BlockPos(x, y, z)).getBlock();
+                    if (block.getMaterial().isSolid() || block.getMaterial().isLiquid()) {
+                        return false;
+                    }
+                }
+            }
+        }
+        return true;
     }
 
     private void saveSafePosition(EntityPlayerSP player) {

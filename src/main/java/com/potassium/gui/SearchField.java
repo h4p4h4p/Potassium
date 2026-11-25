@@ -15,7 +15,7 @@ public class SearchField {
     private static final String PLACEHOLDER = "Search settings...";
     private static final int MAX_QUERY = 24;
     private static final float WIDTH = 150f;
-    private static final float HEIGHT = 14f;
+    private static final float HEIGHT = 13f;
 
     private final StringBuilder query = new StringBuilder();
     private float x;
@@ -25,6 +25,22 @@ public class SearchField {
     public void layout(int screenHeight) {
         x = 4;
         y = screenHeight - HEIGHT - 4;
+    }
+
+    public float getX() {
+        return x;
+    }
+
+    public float getY() {
+        return y;
+    }
+
+    public float getWidth() {
+        return WIDTH;
+    }
+
+    public float getHeight() {
+        return HEIGHT;
     }
 
     public String query() {
@@ -62,8 +78,8 @@ public class SearchField {
 
     public void draw(float mx, float my) {
         boolean hovered = contains(mx, my);
-        int border = focused ? 0xFF33D6FF : Theme.PANEL_BORDER;
-        RenderUtil.drawRect(x, y, WIDTH, HEIGHT, focused ? 0xF01A2126 : 0xE0141414);
+        int border = focused ? Theme.ACCENT : Theme.PANEL_BORDER;
+        RenderUtil.drawRect(x, y, WIDTH, HEIGHT, focused ? 0xF0161920 : 0xE0121419);
         RenderUtil.drawRect(x, y, WIDTH, 1, border);
         RenderUtil.drawRect(x, y + HEIGHT - 1, WIDTH, 1, border);
         RenderUtil.drawRect(x, y, 1, HEIGHT, border);
@@ -73,11 +89,12 @@ public class SearchField {
         int color = isFiltering() ? Theme.TEXT : (hovered ? Theme.TEXT_DIM : Theme.TEXT_GRAY);
 
         float tx = x + 6;
+        float textY = RenderUtil.guiTextY(y, HEIGHT);
         if (isFiltering() && (System.currentTimeMillis() / 450L) % 2 == 0) {
-            tx += RenderUtil.getTextWidth(text);
-            RenderUtil.drawRect(tx + 1, y + 3, 1, RenderUtil.getTextHeight(), 0xFF33D6FF);
+            tx += RenderUtil.getGuiTextWidth(text);
+            RenderUtil.drawRect(tx + 1, textY, 1, RenderUtil.getGuiTextHeight(), Theme.ACCENT);
         }
-        RenderUtil.drawString(text, tx, y + 4, color);
+        RenderUtil.drawGuiString(text, tx, textY, color);
     }
 
     public boolean onClick(float mx, float my, int button) {

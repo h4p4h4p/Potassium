@@ -75,8 +75,6 @@ public class Criticals extends Module {
             player.jump();
         } else if (MODE_PACKET.equals(mode())) {
             sendFallPackets(player);
-            // The server sees the fake fall, but the client still thinks it is grounded.
-            player.onCriticalHit(event.target);
         }
     }
 

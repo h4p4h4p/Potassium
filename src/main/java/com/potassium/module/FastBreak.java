@@ -63,7 +63,7 @@ public class FastBreak extends Module {
     private int damageTicks;
 
     public FastBreak() {
-        super("FastBreak", Category.MOVEMENT);
+        super("FastBreak", Category.WORLD);
         settings.add(modeSetting);
         settings.add(damageSetting);
         settings.add(ticksSetting);

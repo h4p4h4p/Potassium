@@ -2,10 +2,12 @@ package com.potassium.module;
 
 public enum Category {
 
-    MOVEMENT("Movement"),
     COMBAT("Combat"),
+    MOVEMENT("Movement"),
+    PLAYER("Player"),
+    WORLD("World"),
     RENDER("Render"),
-    INTERFACE("Interface");
+    CLIENT("Client");
 
     private final String name;
 

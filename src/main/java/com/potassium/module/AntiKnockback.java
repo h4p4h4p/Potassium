@@ -1,9 +1,12 @@
 package com.potassium.module;
 
+import com.potassium.settings.BooleanSetting;
 import com.potassium.settings.ModeSetting;
+import com.potassium.settings.RangeSetting;
 import com.potassium.settings.Setting;
 import com.potassium.settings.SliderSetting;
 import io.netty.channel.Channel;
+import com.potassium.util.PlayerUtil;
 import io.netty.channel.ChannelHandler;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelInboundHandlerAdapter;
@@ -13,6 +16,7 @@ import net.minecraft.network.NetworkManager;
 import net.minecraft.network.Packet;
 import net.minecraft.network.play.server.S12PacketEntityVelocity;
 import net.minecraft.network.play.server.S27PacketExplosion;
+import net.minecraft.util.MathHelper;
 import net.minecraft.util.Vec3;
 import net.minecraftforge.common.MinecraftForge;
 import net.minecraftforge.fml.common.eventhandler.SubscribeEvent;
@@ -22,16 +26,22 @@ import net.minecraftforge.fml.common.network.FMLNetworkEvent;
 public class AntiKnockback extends Module {
 
     public static final String MODE_MODIFY = "Modify";
-    public static final String MODE_LAG = "Lag";
-    public static final String MODE_REVERSAL = "Reversal";
+    public static final String MODE_JUMP_RESET = "Jump Reset";
 
     private static final String HANDLER_NAME = "potassium_antiknockback";
-    private static final int REVERSAL_MAX_WAIT_TICKS = 4;
 
-    private final ModeSetting modeSetting = new ModeSetting("Mode", new String[]{MODE_MODIFY, MODE_LAG, MODE_REVERSAL}, 0);
+    private final ModeSetting modeSetting = new ModeSetting("Mode",
+            new String[]{MODE_MODIFY, MODE_JUMP_RESET}, 0);
     private final SliderSetting horizontalSetting = new SliderSetting("Horizontal", 0, -1.0, 1.0, 0.1);
     private final SliderSetting verticalSetting = new SliderSetting("Vertical", 0, -1.0, 1.0, 0.1);
-    private final SliderSetting lagChanceSetting = new SliderSetting("Lag Chance", 0, 0, 100, 5);
+    private final SliderSetting chanceSetting = new SliderSetting("Chance", 100, 0, 100, 1);
+    // Chance is whether an attempt is made at all; Accuracy is how well that attempt is timed.
+    // Each attempt draws its timing accuracy from this range; a miss is replayed a tick late.
+    private final RangeSetting accuracySetting = new RangeSetting("Accuracy", 100, 100, 0, 100, 1);
+    // Leaves the hit alone while the player gives no movement input, so a standing player keeps
+    // vanilla knockback instead of every hit looking damped.
+    private final BooleanSetting onlyWhileMovingSetting =
+            new BooleanSetting("Only While Moving", false);
 
     private final Minecraft mc = Minecraft.getMinecraft();
     private final AntiKnockbackHandler handler = new AntiKnockbackHandler();
@@ -41,46 +51,46 @@ public class AntiKnockback extends Module {
     private volatile boolean injected;
 
     // Snapshot settings for the Netty thread; Minecraft settings are not thread-safe.
-    private volatile boolean modifyMode;
-    private volatile boolean lagMode;
-    private volatile boolean reversalMode;
+    private volatile boolean jumpResetMode;
     private volatile double horizontal;
     private volatile double vertical;
-    private volatile double lagChance;
-
-    private volatile int clientTick;
-    private volatile boolean reversalPending;
-    private volatile int reversalApplyTick;
-    private volatile double reversalX;
-    private volatile double reversalY;
-    private volatile double reversalZ;
+    private volatile double chance;
+    private volatile boolean jumpResetPending;
+    private volatile boolean jumpResetLate;
+    // Netty-thread snapshot: the settings and the player's input are only read on the client thread.
+    private volatile boolean onlyWhileMoving;
+    private volatile boolean moving;
 
     public AntiKnockback() {
         super("AntiKnockback", Category.COMBAT);
         settings.add(modeSetting);
         settings.add(horizontalSetting);
         settings.add(verticalSetting);
-        settings.add(lagChanceSetting);
+        settings.add(chanceSetting);
+        settings.add(accuracySetting);
+        settings.add(onlyWhileMovingSetting);
         MinecraftForge.EVENT_BUS.register(this);
     }
 
     @Override
     public String getTag() {
-        if (modify()) {
-            return Math.round(horizontalSetting.getValue() * 100) + "% "
-                    + Math.round(verticalSetting.getValue() * 100) + "%";
-        }
-        if (lag()) {
-            return Math.round(lagChanceSetting.getValue()) + "%";
-        }
-        return null;
+        if (MODE_JUMP_RESET.equals(mode())) return MODE_JUMP_RESET;
+        return multiplier(horizontalSetting.getValue()) + "h "
+                + multiplier(verticalSetting.getValue()) + "v";
+    }
+
+    /** The multiplier the slider shows, without trailing noise from the stored double. */
+    private static String multiplier(double value) {
+        return Double.toString(Math.round(value * 100.0D) / 100.0D);
     }
 
     @Override
     public boolean isSettingVisible(Setting setting) {
-        if (setting == horizontalSetting) return modify();
-        if (setting == verticalSetting) return modify();
-        if (setting == lagChanceSetting) return lag();
+        if (setting == horizontalSetting || setting == verticalSetting) {
+            return MODE_MODIFY.equals(mode());
+        }
+        if (setting == chanceSetting) return MODE_JUMP_RESET.equals(mode());
+        if (setting == accuracySetting) return MODE_JUMP_RESET.equals(mode());
         return super.isSettingVisible(setting);
     }
 
@@ -88,97 +98,84 @@ public class AntiKnockback extends Module {
         return modeSetting.getValue();
     }
 
-    private boolean modify() {
-        return MODE_MODIFY.equals(mode());
-    }
-
-    private boolean lag() {
-        return MODE_LAG.equals(mode());
-    }
-
-    private boolean reversal() {
-        return MODE_REVERSAL.equals(mode());
-    }
-
     @SubscribeEvent
     public void onTick(TickEvent.ClientTickEvent event) {
-        if (event.phase == TickEvent.Phase.START) {
-            ++clientTick;
-            syncSettings();
-            if (!isEnabled()) return;
-            if (!reversalMode) clearReversal();
-            EntityPlayerSP player = mc.thePlayer;
-            if (player != null) playerId = player.getEntityId();
-            armChannel();
+        if (event.phase != TickEvent.Phase.START) return;
 
-            // Fallback for a pipeline that has not accepted the handler yet. The
-            // packet path is primary; this still prevents the knockback if the
-            // channel was replaced or injection failed.
-            if (!injected && modifyMode && player != null && player.velocityChanged) {
-                player.motionX *= horizontal;
-                player.motionY *= vertical;
-                player.motionZ *= horizontal;
-                player.velocityChanged = false;
-            }
-            return;
+        syncSettings();
+        if (!isEnabled()) return;
+        EntityPlayerSP player = mc.thePlayer;
+        if (player != null) playerId = player.getEntityId();
+        armChannel();
+
+        // Rise's jump reset: jump on the tick after a hit that carried upward knockback, so the
+        // jump's own motion answers the knockback. The packet itself goes through untouched.
+        // Chance decides whether an attempt is made; Accuracy decides whether that attempt is
+        // timed onto the hit tick. A mistimed attempt is replayed one tick late, where the
+        // player tick rejects it once the knockback has already lifted the player off the floor.
+        boolean jumped = false;
+        if (jumpResetLate) {
+            jumpResetLate = false;
+            if (jumpResetMode && player != null) jumped = jump(player);
         }
-        if (isEnabled() && reversalMode) handleReversal();
+        if (!jumped && jumpResetPending) {
+            jumpResetPending = false;
+            if (jumpResetMode && player != null && Math.random() * 100.0D < chance) {
+                if (Math.random() * 100.0D < accuracySetting.random()) {
+                    jump(player);
+                } else {
+                    jumpResetLate = true;
+                }
+            }
+        }
+
+        // Fallback for a pipeline that has not accepted the handler yet. The packet path is
+        // primary; this still prevents the knockback if the channel was replaced or injection
+        // failed.
+        if (!jumpResetMode && !injected && player != null && player.velocityChanged
+                && allowsNow()) {
+            player.motionX *= horizontal;
+            player.motionY *= vertical;
+            player.motionZ *= horizontal;
+            player.velocityChanged = false;
+        }
+    }
+
+    /**
+     * Vanilla's jump motion, including the sprint boost a real jump adds.
+     *
+     * @return false when the player cannot jump on this tick, so a late attempt can never
+     * stack a second jump on an attempt that already landed.
+     */
+    private boolean jump(EntityPlayerSP player) {
+        if (!player.onGround || player.isInWater() || player.isInLava()
+                || player.isOnLadder() || player.isRiding()) {
+            return false;
+        }
+        player.motionY = 0.42D;
+        if (player.isSprinting()) {
+            float yaw = player.rotationYaw * 0.017453292F;
+            player.motionX -= MathHelper.sin(yaw) * 0.2F;
+            player.motionZ += MathHelper.cos(yaw) * 0.2F;
+        }
+        player.isAirBorne = true;
+        return true;
+    }
+
+    /** True unless the movement-only modifier is on and the player is standing still. */
+    private boolean allowsNow() {
+        return !onlyWhileMovingSetting.getValue()
+                || (mc.thePlayer != null && PlayerUtil.isMoving(mc.thePlayer));
     }
 
     private void syncSettings() {
-        modifyMode = modify();
-        lagMode = lag();
-        reversalMode = reversal();
+        jumpResetMode = MODE_JUMP_RESET.equals(mode());
         horizontal = horizontalSetting.getValue();
         vertical = verticalSetting.getValue();
-        lagChance = lagChanceSetting.getValue();
+        chance = chanceSetting.getValue();
+        onlyWhileMoving = onlyWhileMovingSetting.getValue();
+        moving = mc.thePlayer != null && PlayerUtil.isMoving(mc.thePlayer);
         active = isEnabled();
-    }
-
-    /**
-     * Records where the player was when the knockback arrived, then lets the packet through.
-     * The next tick is spent measuring where the knockback actually moved them.
-     */
-    private void captureReversal() {
-        EntityPlayerSP player = mc.thePlayer;
-        if (player == null) return;
-        reversalX = player.posX;
-        reversalY = player.posY;
-        reversalZ = player.posZ;
-        reversalApplyTick = clientTick + 1;
-        reversalPending = true;
-    }
-
-    /**
-     * Sends the player back with the velocity that covers the distance to the pre-knockback
-     * position. Running at the end of the tick means the correction moves them on the next one.
-     */
-    private void handleReversal() {
-        if (!reversalPending || clientTick < reversalApplyTick) return;
-
-        EntityPlayerSP player = mc.thePlayer;
-        if (player == null) {
-            clearReversal();
-            return;
-        }
-
-        double dx = reversalX - player.posX;
-        double dy = reversalY - player.posY;
-        double dz = reversalZ - player.posZ;
-
-        if (dx * dx + dy * dy + dz * dz < 1.0E-4D) {
-            if (clientTick - reversalApplyTick >= REVERSAL_MAX_WAIT_TICKS) clearReversal();
-            return;
-        }
-
-        player.motionX = dx;
-        player.motionY = dy;
-        player.motionZ = dz;
-        clearReversal();
-    }
-
-    private void clearReversal() {
-        reversalPending = false;
     }
 
     private void armChannel() {
@@ -194,9 +191,10 @@ public class AntiKnockback extends Module {
      */
     @SubscribeEvent
     public void onPlayerTick(TickEvent.PlayerTickEvent event) {
-        if (event.phase != TickEvent.Phase.START || !active || injected) return;
+        if (event.phase != TickEvent.Phase.START || !active || injected || jumpResetMode) return;
+        if (!allowsNow()) return;
         EntityPlayerSP player = mc.thePlayer;
-        if (player == null || event.player != player || !modifyMode || !player.velocityChanged) {
+        if (player == null || event.player != player || !player.velocityChanged) {
             return;
         }
         player.motionX *= horizontal;
@@ -235,7 +233,6 @@ public class AntiKnockback extends Module {
 
     @Override
     public void onEnable() {
-        clearReversal();
         syncSettings();
         active = true;
         if (mc.thePlayer != null) playerId = mc.thePlayer.getEntityId();
@@ -244,7 +241,8 @@ public class AntiKnockback extends Module {
 
     @Override
     public void onDisable() {
-        clearReversal();
+        jumpResetPending = false;
+        jumpResetLate = false;
         active = false;
         injected = false;
         boundChannel = null;
@@ -261,33 +259,27 @@ public class AntiKnockback extends Module {
                     id = mc.thePlayer.getEntityId();
                     playerId = id;
                 }
+                boolean allowed = !onlyWhileMoving || moving;
                 if (msg instanceof S12PacketEntityVelocity) {
                     S12PacketEntityVelocity p = (S12PacketEntityVelocity) msg;
-                    if (id >= 0 && p.getEntityID() == id) {
-                        if (lagMode && Math.random() * 100.0D < lagChance) {
-                            return;
-                        }
-                        if (modifyMode) {
+                    if (allowed && id >= 0 && p.getEntityID() == id) {
+                        if (jumpResetMode) {
+                            // Only a hit with upward knockback is worth jumping against.
+                            if (p.getMotionY() > 0) jumpResetPending = true;
+                        } else {
                             msg = new S12PacketEntityVelocity(id,
                                     p.getMotionX() / 8000.0 * horizontal,
                                     p.getMotionY() / 8000.0 * vertical,
                                     p.getMotionZ() / 8000.0 * horizontal);
                         }
-                        if (reversalMode) captureReversal();
                     }
-                } else if (msg instanceof S27PacketExplosion) {
+                } else if (msg instanceof S27PacketExplosion && !jumpResetMode && allowed) {
                     S27PacketExplosion p = (S27PacketExplosion) msg;
-                    if (lagMode && Math.random() * 100.0D < lagChance) {
-                        return;
-                    }
-                    if (modifyMode) {
-                        msg = new S27PacketExplosion(p.getX(), p.getY(), p.getZ(), p.getStrength(),
-                                p.getAffectedBlockPositions(),
-                                new Vec3(p.func_149149_c() * horizontal,
-                                        p.func_149144_d() * vertical,
-                                        p.func_149147_e() * horizontal));
-                    }
-                    if (reversalMode) captureReversal();
+                    msg = new S27PacketExplosion(p.getX(), p.getY(), p.getZ(), p.getStrength(),
+                            p.getAffectedBlockPositions(),
+                            new Vec3(p.func_149149_c() * horizontal,
+                                    p.func_149144_d() * vertical,
+                                    p.func_149147_e() * horizontal));
                 }
             }
             ctx.fireChannelRead(msg);

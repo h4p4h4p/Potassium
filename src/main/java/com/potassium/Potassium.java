@@ -3,13 +3,13 @@ package com.potassium;
 import com.potassium.command.CommandManager;
 import com.potassium.config.ConfigManager;
 import com.potassium.gui.ClickGUI;
-import com.potassium.gui.Theme;
-import com.potassium.module.Interface;
+import com.potassium.hud.HudEditOverlay;
+import com.potassium.hud.HudManager;
 import com.potassium.module.Module;
 import com.potassium.module.ModuleManager;
-import com.potassium.util.RenderUtil;
+import com.potassium.util.MovementInputStack;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.gui.ScaledResolution;
+import net.minecraft.client.gui.GuiChat;
 import net.minecraft.client.settings.KeyBinding;
 import net.minecraftforge.client.event.RenderGameOverlayEvent;
 import net.minecraftforge.common.MinecraftForge;
@@ -19,12 +19,6 @@ import net.minecraftforge.fml.common.event.FMLPreInitializationEvent;
 import net.minecraftforge.fml.common.eventhandler.SubscribeEvent;
 import net.minecraftforge.fml.common.gameevent.TickEvent;
 import org.lwjgl.input.Keyboard;
-import org.lwjgl.opengl.Display;
-
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
 
 @Mod(modid = Potassium.MODID, name = Potassium.NAME, version = Potassium.VERSION)
 public class Potassium {
@@ -32,7 +26,6 @@ public class Potassium {
     public static final String MODID = "potassium";
     public static final String NAME = "Potassium";
     public static final String VERSION = "ItsEverydayBro";
-    private static final String WINDOW_TITLE = "Potassium version-" + VERSION;
 
     public static Potassium INSTANCE;
 
@@ -40,6 +33,8 @@ public class Potassium {
     public ConfigManager configManager;
     public ClickGUI clickGui;
     public CommandManager commandManager;
+    public HudManager hudManager;
+    public HudEditOverlay hudEditOverlay;
 
     public final KeyBinding clickGuiKey = new KeyBinding("ClickGUI", Keyboard.KEY_K, "Potassium");
 
@@ -54,12 +49,14 @@ public class Potassium {
     public void init(FMLInitializationEvent event) {
         net.minecraftforge.fml.client.registry.ClientRegistry.registerKeyBinding(clickGuiKey);
         MinecraftForge.EVENT_BUS.register(this);
+        MovementInputStack.init();
         moduleManager = new ModuleManager();
         clickGui = new ClickGUI();
         commandManager = new CommandManager();
+        hudManager = new HudManager();
+        hudEditOverlay = new HudEditOverlay(hudManager);
         configManager = new ConfigManager();
-        configManager.load(moduleManager);
-        updateWindowTitle();
+        configManager.load(moduleManager, hudManager);
     }
 
     public static void scheduleSave() {
@@ -68,7 +65,7 @@ public class Potassium {
 
     public void saveConfig() {
         if (configManager != null && moduleManager != null) {
-            configManager.save(moduleManager);
+            configManager.save(moduleManager, hudManager);
         }
     }
 
@@ -77,15 +74,9 @@ public class Potassium {
         saveConfig();
     }
 
-    private static void updateWindowTitle() {
-        if (!Display.isCreated() || WINDOW_TITLE.equals(Display.getTitle())) return;
-        Display.setTitle(WINDOW_TITLE);
-    }
-
     @SubscribeEvent
     public void onClientTick(TickEvent.ClientTickEvent event) {
         if (event.phase != TickEvent.Phase.END) return;
-        updateWindowTitle();
         if (clickGuiKey.isPressed()) {
             if (mc.currentScreen != null && mc.currentScreen instanceof ClickGUI) {
                 mc.displayGuiScreen(null);
@@ -121,51 +112,11 @@ public class Potassium {
     public void onRender(RenderGameOverlayEvent event) {
         if (event.type != RenderGameOverlayEvent.ElementType.TEXT) return;
 
-        Module iface = moduleManager.getModule("Interface");
-        if (iface == null || !iface.isEnabled()) return;
-        Interface hud = (Interface) iface;
-
-        if (hud.shouldShowWatermark()) {
-            String playerName = mc.thePlayer != null ? mc.thePlayer.getName() : mc.getSession().getUsername();
-            String prefix = "[";
-            String suffix = " v" + VERSION + " - " + playerName + "]";
-            int x = 2;
-            RenderUtil.drawString(prefix, x, 2, 0xFFFFFFFF);
-            x += RenderUtil.getTextWidth(prefix);
-            RenderUtil.drawString(NAME, x, 2, Theme.ACCENT);
-            x += RenderUtil.getTextWidth(NAME);
-            RenderUtil.drawString(suffix, x, 2, 0xFFFFFFFF);
-        }
-
-        if (!hud.shouldShowModuleList()) return;
-
-        ScaledResolution sr = new ScaledResolution(mc);
-        int width = sr.getScaledWidth();
-
-        List<Module> visible = new ArrayList<>(moduleManager.getEnabledModules());
-        Map<Module, String> suffixes = new HashMap<>();
-        for (Module module : visible) {
-            String tag = module.getTag();
-            suffixes.put(module, tag == null || tag.isEmpty() ? "" : " " + tag);
-        }
-        // Longest rows first so the right-aligned list has a clean left edge.
-        visible.sort((a, b) -> {
-            int widthA = RenderUtil.getTextWidth(a.getName() + suffixes.get(a));
-            int widthB = RenderUtil.getTextWidth(b.getName() + suffixes.get(b));
-            if (widthA != widthB) return Integer.compare(widthB, widthA);
-            return a.getName().compareToIgnoreCase(b.getName());
-        });
-
-        int y = 2;
-        for (Module module : visible) {
-            String suffix = suffixes.get(module);
-            int nameWidth = RenderUtil.getTextWidth(module.getName());
-            float x = width - 2 - nameWidth - RenderUtil.getTextWidth(suffix);
-            RenderUtil.drawString(module.getName(), x, y, Theme.ACCENT);
-            if (!suffix.isEmpty()) {
-                RenderUtil.drawString(suffix, x + nameWidth, y, Theme.TEXT_GRAY);
-            }
-            y += RenderUtil.getTextHeight() + 1;
-        }
+        Module hudModule = moduleManager.getModule("HUD");
+        if (hudModule == null || !hudModule.isEnabled()) return;
+        // The chat HUD editor redraws the whole HUD on top of its background; drawing it
+        // here too stacked a second set of background plates behind every text row.
+        if (mc.currentScreen instanceof GuiChat) return;
+        hudManager.render();
     }
 }

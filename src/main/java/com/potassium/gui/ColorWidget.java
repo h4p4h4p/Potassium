@@ -23,27 +23,28 @@ public class ColorWidget extends Widget implements TextInput {
     @Override
     public void draw(float mx, float my) {
         boolean hovered = contains(mx, my);
-        RenderUtil.drawString(setting.getName(), x + 6, y + 4, hovered ? Theme.TEXT : Theme.TEXT_GRAY);
+        RenderUtil.drawGuiString(setting.getName(), x + 6, RenderUtil.guiTextY(y, height), hovered ? Theme.TEXT : Theme.TEXT_GRAY);
         drawModifiedMarker(!setting.isDefault(), setting.getName());
 
         int shown = currentColor();
         String hex = text();
 
-        float textW = RenderUtil.getTextWidth(hex);
+        float textW = RenderUtil.getGuiTextWidth(hex);
         float textX = x + width - 6 - textW;
         float swatchX = textX - GAP - SWATCH;
         float swatchY = y + height / 2f - SWATCH / 2f;
 
         if (capturing) {
-            RenderUtil.drawRect(textX - 3, y + 1, textW + 6, height - 2, 0x40219609);
+            RenderUtil.drawRect(textX - 3, y + 1, textW + 6, height - 2,
+                    (0x40 << 24) | (Theme.ACCENT & 0xFFFFFF));
         }
 
         RenderUtil.drawRect(swatchX, swatchY, SWATCH, SWATCH, shown);
 
-        drawLegible(hex, textX, y + 4, shown);
+        drawLegible(hex, textX, RenderUtil.guiTextY(y, height), shown);
 
         if (capturing && (System.currentTimeMillis() / 450L) % 2 == 0) {
-            RenderUtil.drawRect(textX + textW + 1, y + 3, 1, RenderUtil.getTextHeight(), MARKER);
+            RenderUtil.drawRect(textX + textW + 1, RenderUtil.guiTextY(y, height), 1, RenderUtil.getGuiTextHeight(), MARKER);
         }
     }
 
@@ -55,15 +56,15 @@ public class ColorWidget extends Widget implements TextInput {
     private void drawLegible(String hex, float tx, float ty, int color) {
         float lum = luminance(color);
         if (lum > 0.12F && lum < 0.78F) {
-            RenderUtil.drawString(hex, tx, ty, color);
+            RenderUtil.drawGuiString(hex, tx, ty, color);
             return;
         }
         int outline = lum < 0.5F ? 0xFFFFFFFF : 0xFF101014;
-        RenderUtil.drawString(hex, tx - 1, ty, outline);
-        RenderUtil.drawString(hex, tx + 1, ty, outline);
-        RenderUtil.drawString(hex, tx, ty - 1, outline);
-        RenderUtil.drawString(hex, tx, ty + 1, outline);
-        RenderUtil.drawString(hex, tx, ty, color);
+        RenderUtil.drawGuiString(hex, tx - 1, ty, outline);
+        RenderUtil.drawGuiString(hex, tx + 1, ty, outline);
+        RenderUtil.drawGuiString(hex, tx, ty - 1, outline);
+        RenderUtil.drawGuiString(hex, tx, ty + 1, outline);
+        RenderUtil.drawGuiString(hex, tx, ty, color);
     }
 
     private static float luminance(int rgb) {
@@ -101,12 +102,12 @@ public class ColorWidget extends Widget implements TextInput {
     @Override
     public float getPreferredWidth() {
         float marker = setting.isDefault() ? 0 : 7;
-        return Math.max(120, RenderUtil.getTextWidth(setting.getName()) + marker + 10
-                + SWATCH + GAP + RenderUtil.getTextWidth("FFFFFF") + 12);
+        return Math.max(120, RenderUtil.getGuiTextWidth(setting.getName()) + marker + 10
+                + SWATCH + GAP + RenderUtil.getGuiTextWidth("FFFFFF") + 12);
     }
 
     private float textX() {
-        return x + width - 6 - RenderUtil.getTextWidth(text());
+        return x + width - 6 - RenderUtil.getGuiTextWidth(text());
     }
 
     private float swatchX() {

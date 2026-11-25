@@ -74,16 +74,26 @@ public class RightClicker extends Module {
         return Math.min(Math.max(interval, min), max);
     }
 
+    /**
+     * Vanilla's right click touches exactly one thing: the block under the crosshair, or the
+     * item in hand, so only one path runs per click. The arm swing follows the use, the order
+     * vanilla sends it in; without the swing packet a placement arrives from a hand that never
+     * moved, which the blockplace checks read as a missing arm animation.
+     */
     private void rightClick() {
         MovingObjectPosition over = mc.objectMouseOver;
         ItemStack held = mc.thePlayer.getHeldItem();
         if (over != null && over.typeOfHit == MovingObjectPosition.MovingObjectType.BLOCK) {
-            mc.playerController.onPlayerRightClick(mc.thePlayer, mc.theWorld, held, over.getBlockPos(), over.sideHit, over.hitVec);
+            if (mc.playerController.onPlayerRightClick(mc.thePlayer, mc.theWorld, held,
+                    over.getBlockPos(), over.sideHit, over.hitVec)) {
+                mc.thePlayer.swingItem();
+            }
+            return;
         }
         if (held != null) {
             mc.playerController.sendUseItem(mc.thePlayer, mc.theWorld, held);
+            mc.thePlayer.swingItem();
         }
-        mc.thePlayer.swingItem();
     }
 
     private void reset() {

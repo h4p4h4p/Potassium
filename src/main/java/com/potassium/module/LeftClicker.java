@@ -2,6 +2,7 @@ package com.potassium.module;
 
 import com.potassium.settings.BooleanSetting;
 import com.potassium.settings.ModeSetting;
+import com.potassium.settings.RangeSetting;
 import com.potassium.settings.SliderSetting;
 import com.potassium.util.ClickState;
 import net.minecraft.client.Minecraft;
@@ -35,8 +36,7 @@ public class LeftClicker extends Module {
     };
     private final BooleanSetting weaponOnlySetting = new BooleanSetting("Weapon Only", false);
     private final SliderSetting delaySetting = new SliderSetting("Delay", 100, 0, 1000, 10);
-    private final SliderSetting cpsSetting = new SliderSetting("CPS", 12, 1, 20, 1);
-    private final SliderSetting jitterSetting = new SliderSetting("Jitter", 0, 0, 100, 5);
+    private final RangeSetting cpsSetting = new RangeSetting("CPS", 12, 12, 1, 20, 1);
     private final BooleanSetting blockHitSetting = new BooleanSetting("BlockHit", false);
 
     private final Minecraft mc = Minecraft.getMinecraft();
@@ -52,7 +52,6 @@ public class LeftClicker extends Module {
         settings.add(weaponOnlySetting);
         settings.add(delaySetting);
         settings.add(cpsSetting);
-        settings.add(jitterSetting);
         settings.add(blockHitSetting);
         MinecraftForge.EVENT_BUS.register(this);
     }
@@ -145,10 +144,12 @@ public class LeftClicker extends Module {
      * attack can be released per tick, and leftover credit is capped so lag cannot cause a burst.
      */
     private boolean clickDue() {
-        double cps = cpsSetting.getValue();
+        // The CPS range replaces the old Jitter percentage: every tick banks a fraction of a
+        // click drawn from the range, so the pacing varies without a burst-prone chance roll.
+        double cps = cpsSetting.random();
         if (cps <= 0.0) return false;
 
-        clickBudget += (cps / 20.0) * jitterFactor();
+        clickBudget += cps / 20.0;
         if (clickBudget < 1.0) return false;
 
         clickBudget = Math.min(1.0, clickBudget - 1.0);
@@ -172,10 +173,6 @@ public class LeftClicker extends Module {
 
         // Re-block on the next tick instead of sending use and attack together.
         resumeBlockTick = tick + 1;
-    }
-
-    private double jitterFactor() {
-        return 1.0 + (Math.random() * 2.0 - 1.0) * (jitterSetting.getValue() / 100.0);
     }
 
     private boolean triggerMode() {
@@ -229,7 +226,9 @@ public class LeftClicker extends Module {
 
     @Override
     public String getTag() {
-        return Math.round(cpsSetting.getValue()) + " CPS";
+        long low = Math.round(cpsSetting.getLow());
+        long high = Math.round(cpsSetting.getHigh());
+        return low == high ? low + " CPS" : low + "-" + high + " CPS";
     }
 
     @Override

@@ -47,7 +47,7 @@ public class ClientSpoofer extends Module {
     private volatile boolean spoofedThisConnection;
 
     public ClientSpoofer() {
-        super("ClientSpoofer", Category.INTERFACE);
+        super("ClientSpoofer", Category.CLIENT);
         settings.add(modeSetting);
         MinecraftForge.EVENT_BUS.register(this);
     }

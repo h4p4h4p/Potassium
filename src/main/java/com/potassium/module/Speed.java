@@ -6,6 +6,7 @@ import com.potassium.settings.Setting;
 import com.potassium.settings.SliderSetting;
 import com.potassium.util.PlayerUtil;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.entity.EntityPlayerSP;
 import net.minecraft.entity.player.EntityPlayer;
 import net.minecraft.potion.Potion;
 import net.minecraft.potion.PotionEffect;
@@ -22,6 +23,7 @@ public class Speed extends Module {
     public static final String MODE_LEGIT_HOP = "LegitHop";
     public static final String MODE_LOW_HOP = "LowHop";
     public static final String MODE_NCP = "NCP";
+    public static final String MODE_VULCAN = "Vulcan";
 
     // Same ground speed Normal starts from, so the default multiplier lands around 0.33.
     private static final double LOW_HOP_BASE_SPEED = 0.28D;
@@ -39,7 +41,7 @@ public class Speed extends Module {
     private static final float NCP_TIMER_SPEED = 1.08F;
 
     private final ModeSetting modeSetting = new ModeSetting("Mode",
-            new String[]{MODE_NORMAL, MODE_LEGIT_HOP, MODE_LOW_HOP, MODE_NCP}, 0);
+            new String[]{MODE_NORMAL, MODE_LEGIT_HOP, MODE_LOW_HOP, MODE_NCP, MODE_VULCAN}, 0);
     private final SliderSetting speedSetting = new SliderSetting("Speed", 1.2, 0.5, 5.0, 0.05);
     private final BooleanSetting autoJumpSetting = new BooleanSetting("Auto Jump", true);
     private final BooleanSetting glideSetting = new BooleanSetting("Glide", false);
@@ -70,7 +72,7 @@ public class Speed extends Module {
     private int lowHopAirTicks;
     private boolean lowHopJumped;
 
-    private boolean ncpTimerApplied;
+    private boolean timerApplied;
     private int ncpAirTicks;
 
     public Speed() {
@@ -94,8 +96,12 @@ public class Speed extends Module {
 
     @Override
     public boolean isSettingVisible(Setting setting) {
-        if (setting == speedSetting) return !legitHop() && !ncp();
-        if (setting == autoJumpSetting) return !legitHop() && !lowHop() && !ncp();
+        if (setting == speedSetting) {
+            return !legitHop() && !ncp() && !vulcan();
+        }
+        if (setting == autoJumpSetting) {
+            return !legitHop() && !lowHop() && !ncp() && !vulcan();
+        }
         if (setting == glideSetting) return lowHop();
         if (setting == ncpPullDownSetting || setting == ncpBoostSetting
                 || setting == ncpTimerSetting || setting == ncpDamageBoostSetting
@@ -128,32 +134,36 @@ public class Speed extends Module {
         return MODE_NCP.equals(mode());
     }
 
+    private boolean vulcan() {
+        return MODE_VULCAN.equals(mode());
+    }
+
+    /** True while the vanilla-physics Vulcan mode is active; other modules read this. */
+    public boolean isVulcanMode() {
+        return isEnabled() && vulcan();
+    }
+
     @SubscribeEvent
     public void onPlayerTick(TickEvent.PlayerTickEvent event) {
         if (event.phase != TickEvent.Phase.START) return;
         if (!isEnabled()) return;
 
+        // Every player entity fires this event; only the local player drives the module.
+        EntityPlayer player = event.player;
+        if (player == null || player != mc.thePlayer) return;
+
         if (!ncp()) {
-            resetNcpState();
+            resetTimer();
             ncpAirTicks = 0;
         }
-
-        EntityPlayer player = event.player;
-        if (player == null || player != mc.thePlayer) {
-            if (ncp()) {
-                resetNcpState();
-                ncpAirTicks = 0;
-            }
-            return;
-        }
         if (player.capabilities.isFlying || player.isInWater() || player.isInLava()) {
-            if (ncp()) resetNcpState();
+            resetTimer();
             return;
         }
 
         if (legitHop()) {
             // Bunny hop off vanilla movement; no strafe override, so sprint jumps keep their momentum.
-            if (player.onGround && PlayerUtil.isMoving(player)) {
+            if (player.onGround && PlayerUtil.isMoving(player) && !vanillaJumps()) {
                 player.jump();
             }
             return;
@@ -165,7 +175,7 @@ public class Speed extends Module {
                 if (!moving) return;
                 lowHopAirTicks = 0;
                 lowHopJumped = true;
-                player.jump();
+                if (!vanillaJumps()) player.jump();
                 lowHopSpeed = LOW_HOP_BASE_SPEED * speedSetting.getValue();
             } else {
                 // Cutting the rise on the first air tick is the "low" in LowHop: the jump
@@ -206,7 +216,7 @@ public class Speed extends Module {
             // LiquidBounce's NCP mode is a bhop: jump while moving and hold the
             // ground minimum, then blend toward the air minimum while airborne.
             if (moving && player.onGround) {
-                player.jump();
+                if (!vanillaJumps()) player.jump();
                 if (ncpLowHopSetting.getValue()) {
                     player.motionY = NCP_LOW_HOP_MOTION;
                 }
@@ -238,14 +248,24 @@ public class Speed extends Module {
                 player.motionZ *= factor;
             }
 
-            setTimerSpeed(ncpTimerSetting.getValue() ? NCP_TIMER_SPEED : 1.0F);
-            ncpTimerApplied = true;
+            if (ncpTimerSetting.getValue()) {
+                setTimerSpeed(NCP_TIMER_SPEED);
+                timerApplied = true;
+            } else {
+                setTimerSpeed(1.0F);
+                timerApplied = true;
+            }
 
             // NCP DamageBoost: minimum horizontal speed while hurt.
             if (ncpDamageBoostSetting.getValue() && player.hurtTime >= 1) {
                 ncpStrafe(player, Math.max(horizontalSpeed(player), NCP_DAMAGE_BOOST_SPEED),
                         1.0D);
             }
+            return;
+        }
+
+        if (vulcan()) {
+            tickVulcan((EntityPlayerSP) player);
             return;
         }
 
@@ -265,6 +285,37 @@ public class Speed extends Module {
         }
     }
 
+    /**
+     * Vulcan: a bunny hop on vanilla physics.
+     *
+     * <p>Vulcan's Speed check is a prediction: it replays the tick from the previous motion,
+     * the input's own acceleration and the sprint boost vanilla adds on a jump. A module
+     * write on the jump tick lands on top of all three, because the jump event runs before
+     * vanilla applies its movement input and its own jump. A pinned 0.4815 therefore left the
+     * player at roughly 0.81 blocks that tick against the 0.48 a sprint jump can produce, and
+     * that difference is the prediction flag.</p>
+     *
+     * <p>The mode adds no motion at all. Its speed comes from jumping on the first grounded
+     * tick every time, which keeps the sprint-jump envelope a prediction accepts, and from
+     * never letting vanilla stack a second jump's sprint boost on the same tick.</p>
+     */
+    private void tickVulcan(EntityPlayerSP player) {
+        if (!PlayerUtil.isMoving(player) || player.isSneaking()) return;
+        if (!player.onGround) return;
+        if (!vanillaJumps()) player.jump();
+    }
+
+    /**
+     * True when vanilla is about to jump on its own this tick. The player tick runs before the
+     * player's update, so the key state read here is the one vanilla will use; a module jump
+     * on the same tick would add the sprint boost a second time.
+     */
+    private boolean vanillaJumps() {
+        if (mc.thePlayer == null) return false;
+        if (mc.gameSettings != null && mc.gameSettings.keyBindJump.isKeyDown()) return true;
+        return mc.thePlayer.movementInput != null && mc.thePlayer.movementInput.jump;
+    }
+
     private static double horizontalSpeed(EntityPlayer player) {
         return Math.sqrt(player.motionX * player.motionX + player.motionZ * player.motionZ);
     }
@@ -277,6 +328,19 @@ public class Speed extends Module {
             return;
         }
         PlayerUtil.strafe(player, speed, strength);
+    }
+
+    /** True when a collision box sits inside the given distance below the player. */
+    private boolean isOnGround(EntityPlayer player, double distance) {
+        if (mc.theWorld == null) return false;
+        AxisAlignedBB below = player.getEntityBoundingBox().offset(0.0D, -distance, 0.0D);
+        return !mc.theWorld.getCollidingBoundingBoxes(player, below).isEmpty();
+    }
+
+    /** True while descending with a block within 0.66 blocks below the player. */
+    private boolean isGroundExempt(EntityPlayer player) {
+        if (player.motionY >= 0.0D) return false;
+        return isOnGround(player, 0.66D);
     }
 
     /** Minecraft.timer is private; accept both the MCP and SRG field names. */
@@ -294,24 +358,18 @@ public class Speed extends Module {
         }
     }
 
-    /** True while descending with a block within 0.66 blocks below the player. */
-    private boolean isGroundExempt(EntityPlayer player) {
-        if (player.motionY >= 0.0D) return false;
-        AxisAlignedBB below = player.getEntityBoundingBox().offset(0.0D, -0.66D, 0.0D);
-        return !mc.theWorld.getCollidingBoundingBoxes(player, below).isEmpty();
-    }
-
-    /** Restores the timer when leaving NCP. */
-    private void resetNcpState() {
-        if (ncpTimerApplied) {
+    /** Restores the vanilla timer when the active mode stops driving it. */
+    private void resetTimer() {
+        if (timerApplied) {
             setTimerSpeed(1.0F);
-            ncpTimerApplied = false;
+            timerApplied = false;
         }
     }
 
     @Override
     public String getTag() {
         if (ncp()) return MODE_NCP;
+        if (vulcan()) return MODE_VULCAN;
         if (legitHop()) return MODE_LEGIT_HOP;
         double value = speedSetting.getValue();
         return (Math.round(value * 100.0) / 100.0) + "x";
@@ -319,7 +377,7 @@ public class Speed extends Module {
 
     @Override
     public void onEnable() {
-        resetNcpState();
+        resetTimer();
         airSpeed = 0.0D;
         lowHopSpeed = 0.0D;
         lowHopAirTicks = 0;
@@ -329,11 +387,12 @@ public class Speed extends Module {
 
     @Override
     public void onDisable() {
-        resetNcpState();
+        resetTimer();
         airSpeed = 0.0D;
         lowHopSpeed = 0.0D;
         lowHopAirTicks = 0;
         lowHopJumped = false;
         ncpAirTicks = 0;
     }
+
 }

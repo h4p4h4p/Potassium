@@ -3,6 +3,7 @@ package com.potassium.util;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.FontRenderer;
 import net.minecraft.client.gui.Gui;
+import net.minecraft.client.gui.ScaledResolution;
 import net.minecraft.client.renderer.GlStateManager;
 import net.minecraft.client.renderer.Tessellator;
 import net.minecraft.client.renderer.WorldRenderer;
@@ -21,30 +22,40 @@ public class RenderUtil {
         return dx * dx + dy * dy + dz * dz < margin * margin;
     }
 
+    /**
+     * All twelve edges of the box, each as an explicit pair of vertices.
+     *
+     * The squares used to be four-vertex line strips, which draw three edges and leave the
+     * fourth open: the top of the box read as an open shape with a stray edge across it
+     * rather than a closed quad. Drawing the edges one by one removes the gaps and makes it
+     * impossible for a strip to run a line between corners that are not an edge.
+     */
     public static void drawOutlinedBox(Tessellator tessellator, AxisAlignedBB box, int r, int g, int b, int a) {
         WorldRenderer wr = tessellator.getWorldRenderer();
-        wr.begin(3, DefaultVertexFormats.POSITION_COLOR);
-        vertex(wr, box.minX, box.minY, box.minZ, r, g, b, a);
-        vertex(wr, box.maxX, box.minY, box.minZ, r, g, b, a);
-        vertex(wr, box.maxX, box.minY, box.maxZ, r, g, b, a);
-        vertex(wr, box.minX, box.minY, box.maxZ, r, g, b, a);
-        tessellator.draw();
-        wr.begin(3, DefaultVertexFormats.POSITION_COLOR);
-        vertex(wr, box.minX, box.maxY, box.minZ, r, g, b, a);
-        vertex(wr, box.maxX, box.maxY, box.minZ, r, g, b, a);
-        vertex(wr, box.maxX, box.maxY, box.maxZ, r, g, b, a);
-        vertex(wr, box.minX, box.maxY, box.maxZ, r, g, b, a);
-        tessellator.draw();
         wr.begin(1, DefaultVertexFormats.POSITION_COLOR);
-        vertex(wr, box.minX, box.minY, box.minZ, r, g, b, a);
-        vertex(wr, box.minX, box.maxY, box.minZ, r, g, b, a);
-        vertex(wr, box.maxX, box.minY, box.minZ, r, g, b, a);
-        vertex(wr, box.maxX, box.maxY, box.minZ, r, g, b, a);
-        vertex(wr, box.maxX, box.minY, box.maxZ, r, g, b, a);
-        vertex(wr, box.maxX, box.maxY, box.maxZ, r, g, b, a);
-        vertex(wr, box.minX, box.minY, box.maxZ, r, g, b, a);
-        vertex(wr, box.minX, box.maxY, box.maxZ, r, g, b, a);
+
+        edge(wr, box.minX, box.minY, box.minZ, box.maxX, box.minY, box.minZ, r, g, b, a);
+        edge(wr, box.maxX, box.minY, box.minZ, box.maxX, box.minY, box.maxZ, r, g, b, a);
+        edge(wr, box.maxX, box.minY, box.maxZ, box.minX, box.minY, box.maxZ, r, g, b, a);
+        edge(wr, box.minX, box.minY, box.maxZ, box.minX, box.minY, box.minZ, r, g, b, a);
+
+        edge(wr, box.minX, box.maxY, box.minZ, box.maxX, box.maxY, box.minZ, r, g, b, a);
+        edge(wr, box.maxX, box.maxY, box.minZ, box.maxX, box.maxY, box.maxZ, r, g, b, a);
+        edge(wr, box.maxX, box.maxY, box.maxZ, box.minX, box.maxY, box.maxZ, r, g, b, a);
+        edge(wr, box.minX, box.maxY, box.maxZ, box.minX, box.maxY, box.minZ, r, g, b, a);
+
+        edge(wr, box.minX, box.minY, box.minZ, box.minX, box.maxY, box.minZ, r, g, b, a);
+        edge(wr, box.maxX, box.minY, box.minZ, box.maxX, box.maxY, box.minZ, r, g, b, a);
+        edge(wr, box.maxX, box.minY, box.maxZ, box.maxX, box.maxY, box.maxZ, r, g, b, a);
+        edge(wr, box.minX, box.minY, box.maxZ, box.minX, box.maxY, box.maxZ, r, g, b, a);
+
         tessellator.draw();
+    }
+
+    private static void edge(WorldRenderer wr, double x1, double y1, double z1,
+                             double x2, double y2, double z2, int r, int g, int b, int a) {
+        vertex(wr, x1, y1, z1, r, g, b, a);
+        vertex(wr, x2, y2, z2, r, g, b, a);
     }
 
     public static void drawFilledBox(Tessellator tessellator, double minX, double minY, double minZ, double maxX, double maxY, double maxZ, int r, int g, int b, int a) {
@@ -97,6 +108,127 @@ public class RenderUtil {
     public static void drawRect(float x, float y, float w, float h, int color) {
         if (w == 0 || h == 0) return;
         Gui.drawRect((int) x, (int) y, (int) (x + w), (int) (y + h), color);
+    }
+
+    /**
+     * State the client's own drawing changes, saved so a HUD line or a 3D model preview can
+     * hand the renderer back exactly what it found.
+     *
+     * <p>Depth is the one that matters: 2D text turns the depth test off and used to leave it
+     * off, so the next 3D draw inherited it. On the inventory screen that drew the player
+     * model without any depth test, every skin layer painted over the ones behind it and the
+     * hat showed through the head. Lighting leaks the same way and flattens the model.
+     */
+    public static final class GlState {
+
+        private final boolean depthTest;
+        private final boolean depthMask;
+        private final boolean lighting;
+        private final boolean colorMaterial;
+        private final boolean texture2D;
+        private final boolean blend;
+        private final boolean alphaTest;
+        private final boolean cull;
+        private final int textureId;
+
+        private GlState() {
+            depthTest = GL11.glIsEnabled(GL11.GL_DEPTH_TEST);
+            depthMask = GL11.glGetBoolean(GL11.GL_DEPTH_WRITEMASK);
+            lighting = GL11.glIsEnabled(GL11.GL_LIGHTING);
+            colorMaterial = GL11.glIsEnabled(GL11.GL_COLOR_MATERIAL);
+            texture2D = GL11.glIsEnabled(GL11.GL_TEXTURE_2D);
+            blend = GL11.glIsEnabled(GL11.GL_BLEND);
+            alphaTest = GL11.glIsEnabled(GL11.GL_ALPHA_TEST);
+            cull = GL11.glIsEnabled(GL11.GL_CULL_FACE);
+            textureId = GL11.glGetInteger(GL11.GL_TEXTURE_BINDING_2D);
+        }
+
+        public boolean isDepthTest() {
+            return depthTest;
+        }
+    }
+
+    public static GlState saveGlState() {
+        return new GlState();
+    }
+
+    public static void restoreGlState(GlState state) {
+        if (state == null) return;
+
+        // Through GlStateManager, never raw GL: its cache has to agree with what is set, or
+        // the next enable/disable becomes a no-op against the real state.
+        if (state.depthTest) GlStateManager.enableDepth();
+        else GlStateManager.disableDepth();
+        GlStateManager.depthMask(state.depthMask);
+        if (state.lighting) GlStateManager.enableLighting();
+        else GlStateManager.disableLighting();
+        if (state.colorMaterial) GlStateManager.enableColorMaterial();
+        else GlStateManager.disableColorMaterial();
+        if (state.texture2D) GlStateManager.enableTexture2D();
+        else GlStateManager.disableTexture2D();
+        if (state.blend) GlStateManager.enableBlend();
+        else GlStateManager.disableBlend();
+        if (state.alphaTest) GlStateManager.enableAlpha();
+        else GlStateManager.disableAlpha();
+        if (state.cull) GlStateManager.enableCull();
+        else GlStateManager.disableCull();
+        GlStateManager.bindTexture(state.textureId);
+        GlStateManager.color(1f, 1f, 1f, 1f);
+    }
+
+    /**
+     * Soft drop shadow behind a HUD element. The outermost layers fade into the world and
+     * the inner plate keeps the text readable over bright grass, sky or water. Only the HUD
+     * uses this; the ClickGUI keeps its own solid panels.
+     */
+    public static void drawHudShadow(float x, float y, float w, float h) {
+        if (w <= 0f || h <= 0f) return;
+        int pad = 2;
+        drawRect(x - pad - 2, y - pad + 1, w + (pad + 2) * 2f, h + (pad + 2) * 2f, 0x0C000000);
+        drawRect(x - pad - 1, y - pad + 1, w + (pad + 1) * 2f, h + (pad + 1) * 2f, 0x14000000);
+        drawRect(x - pad, y - pad, w + pad * 2f, h + pad * 2f, 0x34000000);
+    }
+
+    /**
+     * Flat plate for the HUD module's Regular panel mode: one rectangle exactly the size of
+     * the text, with none of the soft shadow's padding or fade. Only the HUD uses it; the
+     * ClickGUI keeps its own solid panels.
+     */
+    public static void drawHudPanel(float x, float y, float w, float h) {
+        if (w <= 0f || h <= 0f) return;
+        drawRect(x, y, w, h, 0x66000000);
+    }
+
+    /**
+     * Clips all following drawing to the given rectangle in scaled GUI coordinates.
+     * Scissor works in framebuffer pixels, so the rectangle is scaled and flipped
+     * against the scaled height. Always pair with {@link #disableScissor()}.
+     */
+    public static void enableScissor(float x, float y, float w, float h) {
+        ScaledResolution sr = new ScaledResolution(mc);
+        int scale = sr.getScaleFactor();
+        int sx = (int) (x * scale);
+        int sy = sr.getScaledHeight() * scale - (int) ((y + h) * scale);
+        GL11.glEnable(GL11.GL_SCISSOR_TEST);
+        GL11.glScissor(sx, sy, Math.max(0, (int) Math.ceil(w * scale)),
+                Math.max(0, (int) Math.ceil(h * scale)));
+    }
+
+    /**
+     * The same clip for a screen that draws at its own pixels-per-unit instead of the GUI
+     * scale (the ClickGUI), so the rectangle goes straight to framebuffer pixels.
+     */
+    public static void enableScissor(float x, float y, float w, float h, float pixelsPerUnit) {
+        int fbHeight = mc.displayHeight;
+        int sx = (int) (x * pixelsPerUnit);
+        int sy = fbHeight - (int) ((y + h) * pixelsPerUnit);
+        GL11.glEnable(GL11.GL_SCISSOR_TEST);
+        GL11.glScissor(sx, sy, Math.max(0, (int) Math.ceil(w * pixelsPerUnit)),
+                Math.max(0, (int) Math.ceil(h * pixelsPerUnit)));
+    }
+
+    public static void disableScissor() {
+        GL11.glDisable(GL11.GL_SCISSOR_TEST);
     }
 
     public static void drawBatchedRects(float[] quads, int count, int color) {
@@ -185,5 +317,46 @@ public class RenderUtil {
 
     public static int getTextHeight() {
         return mc.fontRendererObj.FONT_HEIGHT;
+    }
+
+    /** Tahoma text for the ClickGUI, matching Adjust's UI face. */
+    public static void drawGuiString(String text, float x, float y, int color) {
+        GuiFont.drawString(text, x, y, color, false);
+    }
+
+    /** HUD text with a drop shadow. Kept separate from the flat ClickGUI text. */
+    public static void drawGuiStringShadow(String text, float x, float y, int color) {
+        GuiFont.drawStringWithShadow(text, x, y, color, false);
+    }
+
+    /** Tahoma bold, used by the ClickGUI category headers. */
+    public static void drawGuiStringBold(String text, float x, float y, int color) {
+        GuiFont.drawString(text, x, y, color, true);
+    }
+
+    public static float getGuiTextWidth(String text) {
+        return GuiFont.width(text, false);
+    }
+
+    public static float getGuiTextWidthBold(String text) {
+        return GuiFont.width(text, true);
+    }
+
+    public static float getGuiTextHeight() {
+        return GuiFont.height();
+    }
+
+    /** Whole-pixel Tahoma measurements for HUD elements, which are laid out on an int grid. */
+    public static int getGuiTextWidthInt(String text) {
+        return (int) Math.ceil(GuiFont.width(text, false));
+    }
+
+    public static int getGuiTextHeightInt() {
+        return (int) Math.ceil(GuiFont.height());
+    }
+
+    /** Top of a text line centred in a row of the given height. */
+    public static float guiTextY(float rowTop, float rowHeight) {
+        return rowTop + (rowHeight - GuiFont.height()) * 0.5f;
     }
 }

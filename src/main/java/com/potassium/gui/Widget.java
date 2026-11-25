@@ -1,15 +1,23 @@
 package com.potassium.gui;
 
+import com.potassium.settings.BooleanSetting;
+import com.potassium.settings.ColorSetting;
+import com.potassium.settings.ModeSetting;
+import com.potassium.settings.RangeSetting;
+import com.potassium.settings.SelectSetting;
+import com.potassium.settings.Setting;
+import com.potassium.settings.SliderSetting;
+import com.potassium.settings.StringSetting;
 import com.potassium.util.RenderUtil;
 
 public abstract class Widget {
 
-    protected static final int MARKER = 0xFF33D6FF;
+    protected static final int MARKER = 0xFFF5BE5A;
 
     protected float x;
     protected float y;
     protected float width;
-    protected float height = 14;
+    protected float height = 13;
 
     public void setPosition(float x, float y, float width, float height) {
         this.x = x;
@@ -29,8 +37,25 @@ public abstract class Widget {
     /** Small accent square after the label showing the value differs from the shipped default. */
     protected void drawModifiedMarker(boolean modified, String name) {
         if (!modified) return;
-        float mx = x + 8 + RenderUtil.getTextWidth(name);
-        RenderUtil.drawRect(mx, y + 6, 3, 3, MARKER);
+        float mx = x + 8 + RenderUtil.getGuiTextWidth(name);
+        RenderUtil.drawRect(mx, y + (height - 3) / 2f, 3, 3, MARKER);
+    }
+
+    /** The text field inside this widget that is capturing keys right now, if any. */
+    public TextInput getCapturingText() {
+        return this instanceof TextInput && ((TextInput) this).isTextCapturing() ? (TextInput) this : null;
+    }
+
+    /** Builds the row for a setting, so top-level and grouped settings share one mapping. */
+    public static Widget forSetting(Setting setting) {
+        if (setting instanceof SliderSetting) return new SliderWidget((SliderSetting) setting);
+        if (setting instanceof RangeSetting) return new RangeWidget((RangeSetting) setting);
+        if (setting instanceof BooleanSetting) return new BooleanWidget((BooleanSetting) setting);
+        if (setting instanceof ModeSetting) return new ModeWidget((ModeSetting) setting);
+        if (setting instanceof ColorSetting) return new ColorWidget((ColorSetting) setting);
+        if (setting instanceof StringSetting) return new StringWidget((StringSetting) setting);
+        if (setting instanceof SelectSetting) return new SelectWidget((SelectSetting) setting);
+        return null;
     }
 
     public abstract void draw(float mx, float my);

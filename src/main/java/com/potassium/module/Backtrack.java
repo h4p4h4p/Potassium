@@ -1,7 +1,9 @@
 package com.potassium.module;
 
+import com.potassium.gui.Theme;
 import com.potassium.settings.BooleanSetting;
 import com.potassium.settings.SliderSetting;
+import com.potassium.util.RenderUtil;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelInboundHandlerAdapter;
@@ -9,6 +11,8 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.entity.EntityPlayerSP;
 import net.minecraft.client.multiplayer.WorldClient;
 import net.minecraft.client.network.NetHandlerPlayClient;
+import net.minecraft.client.renderer.GlStateManager;
+import net.minecraft.client.renderer.Tessellator;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.player.EntityPlayer;
 import net.minecraft.network.NetworkManager;
@@ -19,11 +23,14 @@ import net.minecraft.network.play.server.S08PacketPlayerPosLook;
 import net.minecraft.network.play.server.S13PacketDestroyEntities;
 import net.minecraft.network.play.server.S14PacketEntity;
 import net.minecraft.network.play.server.S18PacketEntityTeleport;
+import net.minecraft.util.AxisAlignedBB;
+import net.minecraftforge.client.event.RenderWorldLastEvent;
 import net.minecraftforge.common.MinecraftForge;
 import net.minecraftforge.fml.common.ObfuscationReflectionHelper;
 import net.minecraftforge.fml.common.eventhandler.SubscribeEvent;
 import net.minecraftforge.fml.common.gameevent.TickEvent;
 import net.minecraftforge.fml.relauncher.ReflectionHelper;
+import org.lwjgl.opengl.GL11;
 
 import java.lang.reflect.Field;
 import java.util.ArrayDeque;
@@ -40,18 +47,24 @@ import java.util.List;
  * is actually helping. When the real position is closer than the ghost, the queue is flushed
  * immediately instead of keeping a farther position.</p>
  *
+ * <p>Show Real Position draws that reconstructed position as a box the size of the target's
+ * hitbox, the way FakeLag draws the server position of the local player.</p>
+ *
  * <p>Server hit validation is still authoritative. This is a lag/ghost aid, not a spoofed reach
- * packet, and strict anti-cheats may flag or reject hits after a long backtrack.</p>
+ * packet, and strict anti-cheats may flag or reject hits after a long hold.</p>
  */
 public class Backtrack extends Module {
 
     private static final String HANDLER_NAME = "potassium_backtrack";
     private static final double DISTANCE_EPSILON = 0.01D;
+    private static final double REAL_POSITION_EPSILON = 0.01D;
+    private static final double NEAR_CAMERA_MARGIN = 0.05D;
     private static final Field S14_ENTITY_ID = resolveS14EntityId();
 
     private final SliderSetting delaySetting = new SliderSetting("Delay", 250, 50, 1000, 50);
     private final SliderSetting rangeSetting = new SliderSetting("Range", 4.0, 0.0, 6.0, 0.1);
     private final BooleanSetting onlyWhenNeedSetting = new BooleanSetting("Only When Need", true);
+    private final BooleanSetting realPositionSetting = new BooleanSetting("Show Real Position", true);
 
     private final Minecraft mc = Minecraft.getMinecraft();
     private final Object lock = new Object();
@@ -76,12 +89,73 @@ public class Backtrack extends Module {
         settings.add(delaySetting);
         settings.add(rangeSetting);
         settings.add(onlyWhenNeedSetting);
+        settings.add(realPositionSetting);
         MinecraftForge.EVENT_BUS.register(this);
     }
 
     @Override
     public String getTag() {
         return Math.round(delaySetting.getValue()) + "ms";
+    }
+
+    /**
+     * Draws the position the server has for the target, which is the point the held-back
+     * movement packets will eventually move them to. The target's own hitbox is offset from
+     * their delayed client position, so the marker matches their real size and pose.
+     */
+    @SubscribeEvent
+    public void onRenderWorld(RenderWorldLastEvent event) {
+        if (!isEnabled() || !realPositionSetting.getValue()) return;
+        if (mc.thePlayer == null || mc.theWorld == null) return;
+
+        EntityPlayer tracked = target;
+        if (tracked == null || !isValidTarget(tracked)) return;
+
+        double realX;
+        double realY;
+        double realZ;
+        synchronized (lock) {
+            if (targetId != tracked.getEntityId()) return;
+            realX = trueX;
+            realY = trueY;
+            realZ = trueZ;
+        }
+
+        // Nothing to show while the client already holds the server's position.
+        double ox = realX - tracked.posX;
+        double oy = realY - tracked.posY;
+        double oz = realZ - tracked.posZ;
+        if (ox * ox + oy * oy + oz * oz
+                < REAL_POSITION_EPSILON * REAL_POSITION_EPSILON) return;
+
+        double camX = mc.getRenderManager().viewerPosX;
+        double camY = mc.getRenderManager().viewerPosY;
+        double camZ = mc.getRenderManager().viewerPosZ;
+
+        AxisAlignedBB box = tracked.getEntityBoundingBox().offset(ox, oy, oz);
+        if (RenderUtil.pointNearBox(camX, camY, camZ, box, NEAR_CAMERA_MARGIN)) return;
+
+        AxisAlignedBB relative = box.offset(-camX, -camY, -camZ);
+        int color = Theme.ACCENT;
+        int r = (color >> 16) & 0xFF;
+        int g = (color >> 8) & 0xFF;
+        int b = color & 0xFF;
+
+        GlStateManager.disableTexture2D();
+        GlStateManager.enableBlend();
+        GlStateManager.disableCull();
+        GlStateManager.tryBlendFuncSeparate(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA, 1, 0);
+
+        Tessellator tessellator = Tessellator.getInstance();
+        RenderUtil.drawFilledBox(tessellator,
+                relative.minX, relative.minY, relative.minZ,
+                relative.maxX, relative.maxY, relative.maxZ,
+                r, g, b, 45);
+        RenderUtil.drawOutlinedBox(tessellator, relative, r, g, b, 210);
+
+        GlStateManager.enableCull();
+        GlStateManager.disableBlend();
+        GlStateManager.enableTexture2D();
     }
 
     @SubscribeEvent

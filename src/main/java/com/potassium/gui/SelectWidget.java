@@ -10,7 +10,7 @@ import com.potassium.util.RenderUtil;
  */
 public class SelectWidget extends Widget {
 
-    private static final float ROW = 12f;
+    private static final float ROW = 13f;
     private static final float CARET_W = 4f;
     private static final float CARET_H = 3f;
     private static final float FIELD_PAD = 4f;
@@ -55,16 +55,17 @@ public class SelectWidget extends Widget {
     @Override
     public void draw(float mx, float my) {
         boolean hovered = contains(mx, my) || (open == this && insideList(mx, my));
-        RenderUtil.drawString(setting.getName(), x + 6, y + 4, hovered ? Theme.TEXT : Theme.TEXT_GRAY);
+        RenderUtil.drawGuiString(setting.getName(), x + 6, RenderUtil.guiTextY(y, height), hovered ? Theme.TEXT : Theme.TEXT_GRAY);
         drawModifiedMarker(!setting.isDefault(), setting.getName());
 
         float fieldX = x + width - 6 - fieldW();
-        RenderUtil.drawRect(fieldX, y + 1, fieldW(), height - 2, open == this ? 0x40219609 : 0x26000000);
+        RenderUtil.drawRect(fieldX, y + 1, fieldW(), height - 2,
+                open == this ? (0x40 << 24) | (Theme.ACCENT & 0xFFFFFF) : Theme.FIELD_BG);
 
         String value = setting.getDisplayValue();
         int valueColor = setting.getSelectedCount() == 0 ? Theme.TEXT_GRAY
                 : (hovered ? Theme.ACCENT : Theme.TEXT);
-        RenderUtil.drawString(value, fieldX + FIELD_PAD, y + 4, valueColor);
+        RenderUtil.drawGuiString(value, fieldX + FIELD_PAD, RenderUtil.guiTextY(y, height), valueColor);
 
         float caretX = fieldX + fieldW() - FIELD_PAD - CARET_W;
         float caretY = y + height / 2f - CARET_H / 2f;
@@ -78,7 +79,7 @@ public class SelectWidget extends Widget {
     }
 
     private float fieldW() {
-        return Math.max(38f, RenderUtil.getTextWidth(setting.getDisplayValue())
+        return Math.max(38f, RenderUtil.getGuiTextWidth(setting.getDisplayValue())
                 + 10 + CARET_W + FIELD_PAD);
     }
 
@@ -93,7 +94,7 @@ public class SelectWidget extends Widget {
     private float listW() {
         float widest = 0;
         for (String option : setting.getOptions()) {
-            widest = Math.max(widest, RenderUtil.getTextWidth(option));
+            widest = Math.max(widest, RenderUtil.getGuiTextWidth(option));
         }
         return Math.min(230f, Math.max(fieldW(), widest + 20));
     }
@@ -133,8 +134,8 @@ public class SelectWidget extends Widget {
         float lh = listH();
         String[] options = setting.getOptions();
 
-        RenderUtil.drawRect(lx - 1, ly - 1, lw + 2, lh + 2, 0xFF07070A);
-        RenderUtil.drawRect(lx, ly, lw, lh, 0xFF1B1D22);
+        RenderUtil.drawRect(lx - 1, ly - 1, lw + 2, lh + 2, Theme.POPUP_BORDER);
+        RenderUtil.drawRect(lx, ly, lw, lh, Theme.POPUP_BG);
 
         int rows = visibleRows();
         for (int row = 0; row < rows; row++) {
@@ -147,11 +148,11 @@ public class SelectWidget extends Widget {
             if (hovered) RenderUtil.drawRect(lx + 1, rowY + 1, lw - 2, ROW - 2, Theme.HOVER);
 
             float boxX = lx + 5;
-            RenderUtil.drawRect(boxX, rowY + 3, 7, 7, selected ? Theme.ACCENT : 0xFF333333);
+            RenderUtil.drawRect(boxX, rowY + 3, 7, 7, selected ? Theme.ACCENT : Theme.TOGGLE_OFF);
             if (selected) RenderUtil.drawRect(boxX + 2, rowY + 5, 3, 3, Theme.KNOB);
 
             int color = selected ? Theme.ACCENT : (hovered ? Theme.TEXT : Theme.TEXT_GRAY);
-            RenderUtil.drawString(trimToWidth(options[index], lw - 22), lx + 15, rowY + 3, color);
+            RenderUtil.drawGuiString(trimToWidth(options[index], lw - 22), lx + 15, RenderUtil.guiTextY(rowY, ROW), color);
         }
 
         if (options.length > rows) {
@@ -162,14 +163,15 @@ public class SelectWidget extends Widget {
             float thumbH = Math.max(10f, trackH * rows / options.length);
             float maxScroll = maxFirstVisible();
             float t = maxScroll == 0 ? 0f : firstVisible / maxScroll;
-            RenderUtil.drawRect(trackX, trackY + t * (trackH - thumbH), 2, thumbH, 0xAA33D6FF);
+            RenderUtil.drawRect(trackX, trackY + t * (trackH - thumbH), 2, thumbH,
+                    (0xAA << 24) | (Theme.ACCENT & 0xFFFFFF));
         }
     }
 
     private String trimToWidth(String text, float maxWidth) {
-        if (RenderUtil.getTextWidth(text) <= maxWidth) return text;
+        if (RenderUtil.getGuiTextWidth(text) <= maxWidth) return text;
         String ellipsis = "...";
-        while (text.length() > 0 && RenderUtil.getTextWidth(text + ellipsis) > maxWidth) {
+        while (text.length() > 0 && RenderUtil.getGuiTextWidth(text + ellipsis) > maxWidth) {
             text = text.substring(0, text.length() - 1);
         }
         return text + ellipsis;
@@ -214,6 +216,6 @@ public class SelectWidget extends Widget {
     @Override
     public float getPreferredWidth() {
         float marker = setting.isDefault() ? 0 : 7;
-        return Math.max(120, RenderUtil.getTextWidth(setting.getName()) + marker + 14 + fieldW());
+        return Math.max(120, RenderUtil.getGuiTextWidth(setting.getName()) + marker + 14 + fieldW());
     }
 }
