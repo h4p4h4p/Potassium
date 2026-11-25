@@ -29,7 +29,7 @@ public class StringWidget extends Widget implements TextInput {
 
     @Override
     public void draw(float mx, float my) {
-        RenderUtil.drawGuiString(setting.getName(), x + 6, y + 4, Theme.TEXT_GRAY);
+        RenderUtil.drawGuiString(setting.getName(), x + 6, RenderUtil.guiTextY(y, height), Theme.TEXT_GRAY);
         drawModifiedMarker(!setting.isDefault(), setting.getName());
 
         float fieldX = fieldX();
