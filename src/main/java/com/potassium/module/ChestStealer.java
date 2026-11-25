@@ -92,8 +92,12 @@ public class ChestStealer extends Module {
         if (stack == null) return false;
         Item item = stack.getItem();
 
+        // Healing items are governed only by their own option. Otherwise Food would also
+        // catch golden apples and Potions every healing potion, so unchecking Healing would
+        // still leave them in the chest.
+        if (isHealing(stack)) return blacklistSetting.isSelected("Healing");
+
         if (blacklistSetting.isSelected("Armor") && item instanceof ItemArmor) return true;
-        if (blacklistSetting.isSelected("Healing") && isHealing(stack)) return true;
         if (blacklistSetting.isSelected("Potions") && item instanceof ItemPotion) return true;
         if (blacklistSetting.isSelected("Food") && item instanceof ItemFood) return true;
         if (blacklistSetting.isSelected("Swords") && item instanceof ItemSword) return true;
