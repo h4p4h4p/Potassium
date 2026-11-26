@@ -261,6 +261,9 @@ public class KillAura extends Module {
 
     private boolean autoBlockWanted() {
         if (mc.thePlayer == null || target == null) return false;
+        // Auto-block only assists a block the player is already asking for; letting go of
+        // the interact key releases it on the next tick.
+        if (!mc.gameSettings.keyBindUseItem.isKeyDown()) return false;
         ItemStack held = mc.thePlayer.getHeldItem();
         if (held == null || !(held.getItem() instanceof ItemSword)) return false;
         // Do not block over food, a potion or a bow the player is using.
