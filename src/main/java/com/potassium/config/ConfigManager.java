@@ -286,6 +286,15 @@ public class ConfigManager {
             copyValue(values, "Flight.Damage Speed", "Flight.Speed");
         }
 
+        // KillAura's Blocking was briefly the mode dropdown itself (Off, Packet, Vanilla,
+        // Fake). It is now an enable toggle plus a Block Mode; carry the old index over.
+        String oldKillAuraBlocking = values.get("KillAura.Blocking");
+        if (oldKillAuraBlocking != null && oldKillAuraBlocking.matches("[0-3]")) {
+            int oldBlockingIndex = Integer.parseInt(oldKillAuraBlocking);
+            values.put("KillAura.Blocking", Boolean.toString(oldBlockingIndex != 0));
+            values.put("KillAura.Block Mode", Integer.toString(Math.max(0, oldBlockingIndex - 1)));
+        }
+
         // KillAura's Movement Fix was a boolean; Strict (1) is the old true state.
         String oldKillAuraMoveFix = values.get("KillAura.Movement Fix");
         if (oldKillAuraMoveFix != null

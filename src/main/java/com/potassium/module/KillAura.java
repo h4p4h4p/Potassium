@@ -42,7 +42,7 @@ import java.util.Locale;
  *
  * Up to Targets entities are kept in the cycle; each successful hit moves the aim to the next
  * one, so several targets are fought at the configured CPS. Sword blocking can be layered
- * between hits through the Blocking mode.
+ * between hits through the Blocking settings group.
  */
 public class KillAura extends Module {
 
@@ -53,13 +53,13 @@ public class KillAura extends Module {
     public static final String MOVE_FIX_SILENT = "Silent";
     public static final String MOVE_FIX_STRICT = "Strict";
 
-    public static final String BLOCK_OFF = "Off";
     public static final String BLOCK_PACKET = "Packet";
     public static final String BLOCK_VANILLA = "Vanilla";
     public static final String BLOCK_FAKE = "Fake";
 
     private static final String ROTATION_SMOOTHING_GROUP = "Rotation Smoothing";
     private static final String CONDITIONS_GROUP = "Conditions";
+    private static final String BLOCKING_GROUP = "Blocking";
     /** How long the view may take easing back to the camera, in ticks. */
     private static final int MAX_RETURN_TICKS = 60;
 
@@ -81,8 +81,10 @@ public class KillAura extends Module {
     private final BooleanSetting playersOnlySetting = new BooleanSetting("Players Only", true);
     private final BooleanSetting wallCheckSetting = new BooleanSetting("Wall Check", true);
     private final BooleanSetting weaponOnlySetting = new BooleanSetting("Weapon Only", false);
-    private final ModeSetting blockingSetting = new ModeSetting("Blocking",
-            new String[]{BLOCK_OFF, BLOCK_PACKET, BLOCK_VANILLA, BLOCK_FAKE}, 0);
+    private final BooleanSetting blockingEnabledSetting = new BooleanSetting("Blocking", false);
+    private final ModeSetting blockingModeSetting = new ModeSetting("Block Mode",
+            new String[]{BLOCK_PACKET, BLOCK_VANILLA, BLOCK_FAKE}, 0);
+    private final BooleanSetting onMouseDownSetting = new BooleanSetting("On Mouse Down", true);
     private final BooleanSetting stopOnBlockSetting = new BooleanSetting("Stop on Block", false);
     private final ModeSetting movementFixSetting = new ModeSetting("Movement Fix",
             new String[]{MOVE_FIX_NONE, MOVE_FIX_SILENT, MOVE_FIX_STRICT}, 1);
@@ -122,13 +124,18 @@ public class KillAura extends Module {
         wallCheckSetting.setGroup(CONDITIONS_GROUP);
         weaponOnlySetting.setGroup(CONDITIONS_GROUP);
         stopOnBlockSetting.setGroup(CONDITIONS_GROUP);
+        blockingEnabledSetting.setGroup(BLOCKING_GROUP);
+        blockingModeSetting.setGroup(BLOCKING_GROUP);
+        onMouseDownSetting.setGroup(BLOCKING_GROUP);
         settings.add(rotationSetting);
         settings.add(alertDistanceSetting);
         settings.add(rangeSetting);
         settings.add(targetsSetting);
         settings.add(reachSetting);
         settings.add(fovSetting);
-        settings.add(blockingSetting);
+        settings.add(blockingEnabledSetting);
+        settings.add(blockingModeSetting);
+        settings.add(onMouseDownSetting);
         settings.add(cpsSetting);
         settings.add(smoothingSetting);
         settings.add(horizontalSpeedSetting);
@@ -224,16 +231,19 @@ public class KillAura extends Module {
 
     /**
      * The optional pause while the player holds a sword block. Auto-blocking manages its own
-     * block, so Stop on Block only applies when the Blocking setting is Off.
+     * block, so Stop on Block only applies while the Blocking toggle is off.
      */
     private boolean stopOnBlock() {
-        return stopOnBlockSetting.getValue() && BLOCK_OFF.equals(blockingMode())
-                && isBlockingWithSword();
+        return stopOnBlockSetting.getValue() && !blockingEnabled() && isBlockingWithSword();
+    }
+
+    private boolean blockingEnabled() {
+        return blockingEnabledSetting.getValue();
     }
 
     private String blockingMode() {
-        String mode = blockingSetting.getValue();
-        return mode == null ? BLOCK_OFF : mode;
+        String mode = blockingModeSetting.getValue();
+        return mode == null ? BLOCK_PACKET : mode;
     }
 
     /**
@@ -244,10 +254,13 @@ public class KillAura extends Module {
      * in use client-side, giving the real block animation and slowdown, and releases it
      * before each hit. Fake shows that animation without telling the server, so it is only
      * cosmetic. All of them only run while a sword is held.</p>
+     *
+     * <p>With On Mouse Down on, this only assists a block the player is already holding;
+     * with it off, it blocks whenever the aura has a target.</p>
      */
     private void maintainAutoBlock() {
         String mode = blockingMode();
-        if (BLOCK_OFF.equals(mode) || !autoBlockWanted()) {
+        if (!blockingEnabled() || !autoBlockWanted()) {
             stopAutoBlock();
             return;
         }
@@ -261,9 +274,9 @@ public class KillAura extends Module {
 
     private boolean autoBlockWanted() {
         if (mc.thePlayer == null || target == null) return false;
-        // Auto-block only assists a block the player is already asking for; letting go of
-        // the interact key releases it on the next tick.
-        if (!mc.gameSettings.keyBindUseItem.isKeyDown()) return false;
+        // On Mouse Down follows the interact key; without it the aura keeps blocking on its
+        // own whenever a target is in range.
+        if (onMouseDownSetting.getValue() && !mc.gameSettings.keyBindUseItem.isKeyDown()) return false;
         ItemStack held = mc.thePlayer.getHeldItem();
         if (held == null || !(held.getItem() instanceof ItemSword)) return false;
         // Do not block over food, a potion or a bow the player is using.
@@ -271,13 +284,15 @@ public class KillAura extends Module {
     }
 
     private void syncAutoBlockMode() {
-        if (autoBlockActive && !blockingMode().equals(autoBlockMode)) stopAutoBlock();
+        if (autoBlockActive && (!blockingEnabled() || !blockingMode().equals(autoBlockMode))) {
+            stopAutoBlock();
+        }
     }
 
     private void startAutoBlock() {
         ItemStack held = mc.thePlayer.getHeldItem();
         String mode = blockingMode();
-        if (held == null || !(held.getItem() instanceof ItemSword) || BLOCK_OFF.equals(mode)) return;
+        if (held == null || !(held.getItem() instanceof ItemSword) || !blockingEnabled()) return;
 
         // The client-side use state gives Vanilla its animation and slowdown; Fake wants the
         // animation alone. Packet leaves the client untouched and only tells the server.
