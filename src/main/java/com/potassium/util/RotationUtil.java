@@ -10,9 +10,18 @@ public class RotationUtil {
         Minecraft mc = Minecraft.getMinecraft();
         if (mc.thePlayer == null) return new float[]{0, 0};
 
-        double diffX = target.xCoord - mc.thePlayer.posX;
-        double diffY = target.yCoord - (mc.thePlayer.posY + mc.thePlayer.getEyeHeight());
-        double diffZ = target.zCoord - mc.thePlayer.posZ;
+        Vec3 eyes = new Vec3(mc.thePlayer.posX,
+                mc.thePlayer.posY + mc.thePlayer.getEyeHeight(), mc.thePlayer.posZ);
+        return getRotations(target, eyes);
+    }
+
+    /** Rotations from a supplied eye position, for a camera that moves between ticks. */
+    public static float[] getRotations(Vec3 target, Vec3 eyes) {
+        if (target == null || eyes == null) return new float[]{0, 0};
+
+        double diffX = target.xCoord - eyes.xCoord;
+        double diffY = target.yCoord - eyes.yCoord;
+        double diffZ = target.zCoord - eyes.zCoord;
 
         double diffXZ = Math.sqrt(diffX * diffX + diffZ * diffZ);
 

@@ -122,18 +122,6 @@ public final class RotationSmoother {
     }
 
     /**
-     * One tick's camera turn for the mode that draws the aim on the view itself. The generator
-     * is the same and stays on the mouse grid; only the position is the player's own rotation.
-     */
-    public float cameraYawTurn(float delta, double budget) {
-        return (float) turn(delta, budget, RotationUtil.mouseStep(), true, null);
-    }
-
-    public float cameraPitchTurn(float delta, double budget) {
-        return (float) turn(delta, budget, RotationUtil.mouseStep(), false, null);
-    }
-
-    /**
      * A tick of the flick, in degrees. The first ticks of a turn use a fraction of the allowed
      * step, full speed varies inside the ramp, and every value is a whole number of mouse
      * counts. A remainder under one count is left for the tremor rather than flipped back and

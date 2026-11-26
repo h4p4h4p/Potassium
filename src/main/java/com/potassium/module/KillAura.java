@@ -29,14 +29,16 @@ import net.minecraft.util.AxisAlignedBB;
 import net.minecraft.util.BlockPos;
 import net.minecraft.util.EnumFacing;
 import net.minecraft.util.MathHelper;
+import net.minecraft.util.MouseHelper;
 import net.minecraft.util.MovingObjectPosition;
+import net.minecraft.util.Timer;
 import net.minecraft.util.Vec3;
-import net.minecraftforge.client.event.RenderWorldLastEvent;
 import net.minecraftforge.common.MinecraftForge;
 import net.minecraftforge.event.entity.player.PlayerInteractEvent;
 import net.minecraftforge.fml.common.eventhandler.EventPriority;
 import net.minecraftforge.fml.common.eventhandler.SubscribeEvent;
 import net.minecraftforge.fml.common.gameevent.TickEvent;
+import net.minecraftforge.fml.relauncher.ReflectionHelper;
 import org.lwjgl.input.Keyboard;
 import org.lwjgl.input.Mouse;
 
@@ -116,14 +118,11 @@ public class KillAura extends Module {
     private double clickBudget = 1.0D;
     private final RotationSmoother aim = new RotationSmoother();
     private boolean aimInitialised;
-    /** This tick's turn for Lock View rotations, carried out across the tick's frames. */
-    private float normalTurnYaw;
-    private float normalTurnPitch;
-    private boolean normalTurnSet;
-    /** How much of that turn has been drawn already, and how long the whole turn may take. */
-    private double normalTurnDrawn;
-    private double normalTurnSeconds;
-    private long normalTurnNanos;
+    /** Minecraft.timer is private; cached for the Lock View target interpolation. */
+    private Timer clientTimer;
+    /** The mouse helper that replaces vanilla's while Lock View holds a target. */
+    private MouseHelper savedMouseHelper;
+    private LockViewMouseHelper lockViewMouse;
     /** True while a silent aim is being eased back to the camera after the last target. */
     private boolean returning;
     private int returnTicks;
@@ -195,6 +194,7 @@ public class KillAura extends Module {
         // A silent rotation the server is still holding is unwound even with the module off,
         // so turning it off eases the view back instead of snapping it in one packet.
         if (!isEnabled()) {
+            restoreLockViewMouse();
             tickReturn();
             return;
         }
@@ -216,6 +216,7 @@ public class KillAura extends Module {
             target = null;
             targetIndex = 0;
             clickBudget = 1.0D;
+            restoreLockViewMouse();
             // Block Range can cover a threat before it reaches attack Range. Keep the block
             // up even with no attack target, so a player entering the aura is already guarded.
             if (blockingEnabled() && blockThreat() != null) maintainAutoBlock();
@@ -231,6 +232,7 @@ public class KillAura extends Module {
         updateTargets(candidates);
         target = targets.get(targetIndex);
         syncAutoBlockMode();
+        syncLockViewMouse();
 
         // Packet mode blocks before the hit as well as after it: sending C08 first means the
         // server is already blocking when the attack lands, not one packet later.
@@ -255,8 +257,8 @@ public class KillAura extends Module {
         }
         maintainAutoBlock();
 
-        // The aim is chosen once for this tick; the smoother carries it across the frames in
-        // between, and Silent samples it here so this tick's movement packet carries it.
+        // Lock View sets the camera at the same frame the mouse input is sampled; Silent keeps
+        // its own aim for the packet. Either way the aim is chosen once for this tick.
         aimAt(current);
     }
 
@@ -528,37 +530,7 @@ public class KillAura extends Module {
         return block.hitVec.squareDistanceTo(eyes) >= hit.hitVec.squareDistanceTo(eyes) - 1.0E-4D;
     }
 
-    /**
-     * Puts the tick's Lock View rotation on the mouse grid before vanilla builds the movement
-     * packet.
-     *
-     * <p>Lock View rotations are the camera, and the module turns it frame by frame, so the delta
-     * between two movement packets is a fractional angle. A hand cannot produce one: vanilla
-     * only ever adds whole mouse counts, and a server dividing the delta by the count step
-     * finds no sensitivity that fits it. Rounding this tick's camera onto whole counts, the
-     * same snap Silent rotations and Scaffold already apply, leaves every rotation the server
-     * sees on the grid a real mouse moves on. It is written for the packet alone; the camera
-     * is put back at the end of the tick.</p>
-     */
-    @SubscribeEvent(priority = EventPriority.LOW)
-    public void onLockViewAimPacket(TickEvent.PlayerTickEvent event) {
-        if (event.phase != TickEvent.Phase.END) return;
-        if (!isEnabled() || isSilentRotations() || !normalTurnSet) return;
-        // Another module is already aiming this tick; its rotation is the one that goes out.
-        if (SilentLook.isRequested()) return;
-
-        EntityPlayerSP player = mc.thePlayer;
-        if (player == null || event.player != player) return;
-        if (player.isRiding() || mc.currentScreen != null) return;
-
-        float baseYaw = sentInitialised ? sentYaw : player.rotationYaw;
-        float basePitch = sentInitialised ? sentPitch : player.rotationPitch;
-        float[] snapped = RotationUtil.snapToMouse(player.rotationYaw, player.rotationPitch,
-                baseYaw, basePitch);
-        SilentLook.request(snapped[0], snapped[1], SilentLook.MovementFix.NONE);
-    }
-
-    /** Records the rotation this tick's movement packet carried, before the camera is restored. */
+    /** Records the rotation this tick's movement packet carried. */
     @SubscribeEvent(priority = EventPriority.HIGHEST)
     public void onTickEnd(TickEvent.ClientTickEvent event) {
         if (event.phase != TickEvent.Phase.END) return;
@@ -568,25 +540,13 @@ public class KillAura extends Module {
         sentInitialised = true;
     }
 
-    @SubscribeEvent
-    public void onRenderWorld(RenderWorldLastEvent event) {
-        if (mc.thePlayer == null || mc.theWorld == null || mc.currentScreen != null) return;
-        if (isSilentRotations() || !normalTurnSet) return;
-
-        // Lock View rotations are the camera, so this tick's turn is added as it is drawn rather
-        // than pulled out of a stored target: whatever the mouse has moved since the turn was
-        // chosen stays, and the turn finishes inside its own tick. Drawn across the frames of
-        // the tick, a turn is no slower than the game's own look and no longer steps at 20 Hz.
-        long now = System.nanoTime();
-        double share = normalTurnSeconds <= 1.0e-4D ? 1.0D
-                : Math.min(1.0D, (now - normalTurnNanos) / 1.0e9D / normalTurnSeconds);
-        double step = share - normalTurnDrawn;
-        if (step <= 0.0D) return;
-        normalTurnDrawn = share;
-
-        mc.thePlayer.rotationYaw += (float) (normalTurnYaw * step);
-        mc.thePlayer.rotationPitch = MathHelper.clamp_float(
-                mc.thePlayer.rotationPitch + (float) (normalTurnPitch * step), -90.0F, 90.0F);
+    /** Minecraft.timer is private; accept both the MCP and SRG field names. */
+    private float renderPartialTicks() {
+        if (clientTimer == null) {
+            clientTimer = ReflectionHelper.getPrivateValue(Minecraft.class, mc,
+                    "timer", "field_71428_T");
+        }
+        return clientTimer == null ? 1.0F : clientTimer.renderPartialTicks;
     }
 
     private List<TargetCandidate> findTargets() {
@@ -739,9 +699,8 @@ public class KillAura extends Module {
 
     /**
      * Chooses this tick's aim. Silent rotations keep a rotation of their own, so the target is
-     * handed to the smoother, which eases the real aim to it at frame rate and is sampled here
-     * for the packet. Lock View rotations are the camera, so the target is stored and the view is
-     * eased toward it every frame from wherever the mouse has left it.
+     * handed to the smoother and sampled here for the packet. Lock View rotations are the
+     * camera: the target is applied at once, and the mouse helper keeps it locked every frame.
      */
     private void aimAt(EntityLivingBase target) {
         float[] rotations = rotationsTo(target);
@@ -752,19 +711,11 @@ public class KillAura extends Module {
         double pitchStep = RotationUtil.speed(verticalSpeedSetting.random());
 
         if (!isSilentRotations()) {
-            // The camera is the aim. The turn is generated as a flick and rounded onto the
-            // mouse grid, from where the mouse has just left the view, so the server sees a
-            // hand's flicks rather than one perfect step onto the target.
-            float cameraYaw = mc.thePlayer.rotationYaw;
-            float cameraPitch = mc.thePlayer.rotationPitch;
-            normalTurnYaw = aim.cameraYawTurn(
-                    MathHelper.wrapAngleTo180_float(rotations[0] - cameraYaw), yawStep);
-            normalTurnPitch = aim.cameraPitchTurn(rotations[1] - cameraPitch, pitchStep);
-            normalTurnSet = true;
-            normalTurnDrawn = 0.0D;
-            normalTurnNanos = System.nanoTime();
-            normalTurnSeconds = tickSeconds();
-            aimInitialised = true;
+            // OpenAdjust's Lock on applies the whole target delta to the camera every input
+            // sample, not a speed-limited turn. Do the same here; applying it at tick start as
+            // well covers the first frame before the helper runs.
+            aimInitialised = false;
+            applyLockViewRotation(1.0F);
             return;
         }
 
@@ -781,9 +732,101 @@ public class KillAura extends Module {
         requestSilentAim();
     }
 
-    /** The client's tick length; 1.8.9 runs twenty of them a second. */
-    private double tickSeconds() {
-        return 1.0D / 20.0D;
+    /**
+     * OpenAdjust's Lock on: replace the player's rotation with the target aim on every mouse
+     * input sample. The angle is snapped to the sensitivity grid relative to the current
+     * camera, and the previous rotation is moved with it so the renderer has no one-tick lag.
+     */
+    private boolean applyLockViewRotation(float partialTicks) {
+        EntityPlayerSP player = mc.thePlayer;
+        EntityLivingBase current = target;
+        if (!isEnabled() || isSilentRotations() || player == null || current == null
+                || mc.theWorld == null || mc.currentScreen != null
+                || current.worldObj != mc.theWorld || !current.isEntityAlive()) {
+            return false;
+        }
+        // Freecam has its own camera; never fight it for the player's rotation.
+        if (mc.getRenderViewEntity() != player) return false;
+
+        float[] rotations = rotationsTo(current, partialTicks);
+        // Keep the delta on the short way around the yaw wrap; without this a target at
+        // -179 seen from +179 becomes a nearly full extra turn instead of a two-degree one.
+        float baseYaw = MathHelper.wrapAngleTo180_float(player.rotationYaw);
+        float targetYaw = MathHelper.wrapAngleTo180_float(rotations[0]);
+        float yawDelta = MathHelper.wrapAngleTo180_float(targetYaw - baseYaw);
+        float[] snapped = RotationUtil.snapToMouse(baseYaw + yawDelta, rotations[1],
+                baseYaw, player.rotationPitch);
+        player.rotationYaw = MathHelper.wrapAngleTo180_float(snapped[0]);
+        player.rotationPitch = snapped[1];
+        player.prevRotationYaw = player.rotationYaw;
+        player.prevRotationPitch = player.rotationPitch;
+        return true;
+    }
+
+    /** Replaces vanilla's mouse helper while Lock View is actively holding a target. */
+    private void syncLockViewMouse() {
+        boolean wanted = isEnabled() && !isSilentRotations() && target != null
+                && mc.thePlayer != null && mc.theWorld != null && mc.currentScreen == null
+                && mc.getRenderViewEntity() == mc.thePlayer;
+        if (!wanted) {
+            restoreLockViewMouse();
+            return;
+        }
+        installLockViewMouse();
+    }
+
+    private void installLockViewMouse() {
+        if (lockViewMouse != null) return;
+        MouseHelper current = mc.mouseHelper;
+        if (current == null) return;
+        savedMouseHelper = current;
+        lockViewMouse = new LockViewMouseHelper(current);
+        mc.mouseHelper = lockViewMouse;
+    }
+
+    private void restoreLockViewMouse() {
+        if (lockViewMouse == null) return;
+        if (mc.mouseHelper == lockViewMouse && savedMouseHelper != null) {
+            mc.mouseHelper = savedMouseHelper;
+        }
+        lockViewMouse = null;
+        savedMouseHelper = null;
+    }
+
+    /** A mouse helper that keeps the camera on the target while Lock View has one. */
+    private final class LockViewMouseHelper extends MouseHelper {
+
+        private final MouseHelper delegate;
+
+        private LockViewMouseHelper(MouseHelper delegate) {
+            this.delegate = delegate;
+        }
+
+        @Override
+        public void mouseXYChange() {
+            delegate.mouseXYChange();
+            deltaX = delegate.deltaX;
+            deltaY = delegate.deltaY;
+            if (!applyLockViewRotation(renderPartialTicks())) {
+                return;
+            }
+            // The camera was moved directly; letting vanilla apply the physical delta as well
+            // would add the player's mouse movement back into the locked view.
+            deltaX = 0;
+            deltaY = 0;
+        }
+
+        @Override
+        public void grabMouseCursor() {
+            delegate.grabMouseCursor();
+            deltaX = 0;
+            deltaY = 0;
+        }
+
+        @Override
+        public void ungrabMouseCursor() {
+            delegate.ungrabMouseCursor();
+        }
     }
 
     /**
@@ -801,8 +844,9 @@ public class KillAura extends Module {
     }
 
     /**
-     * Starts easing a silent aim back to the camera. On Lock View rotations the aim already is the
-     * camera, so there is nothing to unwind and the view simply stays where the player left it.
+     * Starts easing a silent aim back to the camera. On Lock View rotations the aim already is
+     * the camera, so there is nothing to unwind; the view stays on the last target until the
+     * player moves it.
      */
     private void beginReturn() {
         if (!aimInitialised) return;
@@ -856,7 +900,6 @@ public class KillAura extends Module {
         returning = false;
         returnTicks = 0;
         aimInitialised = false;
-        normalTurnSet = false;
     }
 
     private String rotationMode() {
@@ -882,11 +925,18 @@ public class KillAura extends Module {
     }
 
     private float[] rotationsTo(EntityLivingBase target) {
-        Vec3 point = aimPoint(target);
+        return rotationsTo(target, 1.0F);
+    }
+
+    private float[] rotationsTo(EntityLivingBase target, float partialTicks) {
+        Vec3 point = aimPoint(target, partialTicks);
         if (point == null) {
-            point = new Vec3(target.posX, target.posY + target.getEyeHeight() * 0.9D, target.posZ);
+            Vec3 position = interpolatedPosition(target, partialTicks);
+            point = new Vec3(position.xCoord, position.yCoord + target.getEyeHeight() * 0.9D,
+                    position.zCoord);
         }
-        return RotationUtil.getRotations(point);
+        Vec3 eyes = mc.thePlayer.getPositionEyes(partialTicks);
+        return RotationUtil.getRotations(point, eyes);
     }
 
     /**
@@ -896,9 +946,14 @@ public class KillAura extends Module {
      * see, and null when nothing on the box is exposed.
      */
     private Vec3 aimPoint(EntityLivingBase target) {
-        Vec3 eyes = mc.thePlayer.getPositionEyes(1.0F);
+        return aimPoint(target, 1.0F);
+    }
+
+    private Vec3 aimPoint(EntityLivingBase target, float partialTicks) {
+        Vec3 eyes = mc.thePlayer.getPositionEyes(partialTicks);
         float border = target.getCollisionBorderSize();
-        AxisAlignedBB box = target.getEntityBoundingBox().expand(border, border, border);
+        AxisAlignedBB box = interpolatedBox(target, partialTicks)
+                .expand(border, border, border);
         if (box.isVecInside(eyes)) return eyes;
 
         Vec3 centre = new Vec3((box.minX + box.maxX) / 2.0D,
@@ -911,6 +966,24 @@ public class KillAura extends Module {
                 MathHelper.clamp_double(eyes.zCoord, box.minZ + 0.03D, box.maxZ - 0.03D));
         if (clearLine(eyes, closest)) return closest;
         return null;
+    }
+
+    /** The target's box at the rendered position, so a moving target is tracked smoothly. */
+    private AxisAlignedBB interpolatedBox(EntityLivingBase target, float partialTicks) {
+        AxisAlignedBB box = target.getEntityBoundingBox();
+        Vec3 position = interpolatedPosition(target, partialTicks);
+        double dx = position.xCoord - target.posX;
+        double dy = position.yCoord - target.posY;
+        double dz = position.zCoord - target.posZ;
+        return new AxisAlignedBB(box.minX + dx, box.minY + dy, box.minZ + dz,
+                box.maxX + dx, box.maxY + dy, box.maxZ + dz);
+    }
+
+    private Vec3 interpolatedPosition(EntityLivingBase target, float partialTicks) {
+        return new Vec3(
+                target.lastTickPosX + (target.posX - target.lastTickPosX) * partialTicks,
+                target.lastTickPosY + (target.posY - target.lastTickPosY) * partialTicks,
+                target.lastTickPosZ + (target.posZ - target.lastTickPosZ) * partialTicks);
     }
 
     private boolean clearLine(Vec3 from, Vec3 to) {
@@ -962,12 +1035,12 @@ public class KillAura extends Module {
     }
 
     private void reset() {
+        restoreLockViewMouse();
         stopAutoBlock();
         target = null;
         targets.clear();
         targetIndex = 0;
         clickBudget = 1.0D;
-        normalTurnSet = false;
         sentInitialised = false;
         if (aimInitialised && isSilentRotations()) {
             // Let the server's rotation return on its own step rather than dropping it.
@@ -996,6 +1069,11 @@ public class KillAura extends Module {
                 || setting == onMouseDownSetting) {
             return blockingEnabledSetting.getValue();
         }
+        // Lock View uses OpenAdjust's instant camera lock; these only affect Silent.
+        if (setting == smoothingSetting || setting == horizontalSpeedSetting
+                || setting == verticalSpeedSetting || setting == movementFixSetting) {
+            return isSilentRotations();
+        }
         return true;
     }
 
@@ -1008,10 +1086,12 @@ public class KillAura extends Module {
     @Override
     public void onEnable() {
         reset();
+        syncLockViewMouse();
     }
 
     @Override
     public void onDisable() {
+        restoreLockViewMouse();
         reset();
     }
 }
