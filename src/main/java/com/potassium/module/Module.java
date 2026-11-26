@@ -63,6 +63,15 @@ public abstract class Module {
         return true;
     }
 
+    /**
+     * Whether the enabled state belongs in the config. Action rows such as the config loaders
+     * are switched on to perform one task and switch themselves off, so restoring them as on
+     * at startup would repeat the download or load without the user asking for it.
+     */
+    public boolean isPersistentEnabled() {
+        return true;
+    }
+
     public boolean isSettingVisible(Setting setting) {
         return true;
     }

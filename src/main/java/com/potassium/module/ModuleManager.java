@@ -46,6 +46,7 @@ public class ModuleManager {
         modules.add(new Flight());
         modules.add(new AntiVoid());
         modules.add(new NoFall());
+        modules.add(new LocalConfigs());
         modules.add(new OnlineConfig());
     }
 

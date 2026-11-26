@@ -61,7 +61,8 @@ public class ConfigManager {
         lines.add("potassium.accent=" + String.format("%06X", Theme.ACCENT & 0xFFFFFF));
         lines.add("potassium.rainbow=" + CommandManager.rainbow);
         for (Module module : modules.getModules()) {
-            lines.add(module.getName() + ".enabled=" + module.isEnabled());
+            lines.add(module.getName() + ".enabled="
+                    + (module.isPersistentEnabled() && module.isEnabled()));
             lines.add(module.getName() + ".key=" + module.getKey());
             lines.add(module.getName() + ".bindMode=" + (module.isHoldBind() ? "hold" : "toggle"));
             for (Setting setting : module.getSettings()) {
@@ -364,7 +365,8 @@ public class ConfigManager {
 
             String enabled = values.get(module.getName() + ".enabled");
             // A hold bind is only meant to be on while its key is down, so never restore it as on.
-            if (enabled != null && !(module.isHoldBind() && enabled.equalsIgnoreCase("true"))) {
+            if (enabled != null && module.isPersistentEnabled()
+                    && !(module.isHoldBind() && enabled.equalsIgnoreCase("true"))) {
                 module.setEnabled(enabled.equalsIgnoreCase("true"));
             }
             String key = values.get(module.getName() + ".key");

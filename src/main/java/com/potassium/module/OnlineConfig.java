@@ -131,6 +131,12 @@ public class OnlineConfig extends Module {
         return body.toString();
     }
 
+    /** A download is an action, not a state to restore at startup. */
+    @Override
+    public boolean isPersistentEnabled() {
+        return false;
+    }
+
     @Override
     public void onDisable() {
         // Invalidate an in-flight request; a config fetched for the previous enable must not
