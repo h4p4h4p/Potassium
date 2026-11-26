@@ -110,22 +110,29 @@ public class LocalConfigs extends Module {
         return new File(Minecraft.getMinecraft().mcDataDir, "config/potassium/configs");
     }
 
-    private String[] listConfigs() {
-        long now = System.currentTimeMillis();
-        if (cachedOptions != null && now - cachedAt < CACHE_MILLIS) return cachedOptions;
-
+    /** Every .cfg file in the config folder, sorted for both the picker and %config. */
+    public static List<File> configFiles() {
         File directory = configDirectory();
         if (!directory.exists()) directory.mkdirs();
 
         File[] files = directory.listFiles((dir, name) ->
                 name.toLowerCase().endsWith(".cfg"));
-        List<String> names = new ArrayList<>();
+        List<File> result = new ArrayList<>();
         if (files != null) {
             for (File file : files) {
-                if (file.isFile()) names.add(file.getName());
+                if (file.isFile()) result.add(file);
             }
         }
-        names.sort(String.CASE_INSENSITIVE_ORDER);
+        result.sort((a, b) -> a.getName().compareToIgnoreCase(b.getName()));
+        return result;
+    }
+
+    private String[] listConfigs() {
+        long now = System.currentTimeMillis();
+        if (cachedOptions != null && now - cachedAt < CACHE_MILLIS) return cachedOptions;
+
+        List<String> names = new ArrayList<>();
+        for (File file : configFiles()) names.add(file.getName());
         cachedOptions = names.toArray(new String[0]);
         cachedAt = now;
         return cachedOptions;

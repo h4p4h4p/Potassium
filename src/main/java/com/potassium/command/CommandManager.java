@@ -31,6 +31,7 @@ public class CommandManager {
         commands.add(new BindCommand());
         commands.add(new BindListCommand());
         commands.add(new FriendCommand());
+        commands.add(new ConfigCommand());
         commands.add(new HelpCommand(this));
         MinecraftForge.EVENT_BUS.register(this);
     }
