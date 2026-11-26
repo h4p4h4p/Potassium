@@ -5,6 +5,7 @@ import com.potassium.settings.ModeSetting;
 import com.potassium.settings.RangeSetting;
 import com.potassium.settings.Setting;
 import com.potassium.settings.SliderSetting;
+import com.potassium.util.BlinkBlockQueue;
 import com.potassium.util.ClickState;
 import com.potassium.util.Friends;
 import com.potassium.util.RotationSmoother;
@@ -73,12 +74,16 @@ public class KillAura extends Module {
     public static final String BLOCK_PACKET = "Packet";
     public static final String BLOCK_VANILLA = "Vanilla";
     public static final String BLOCK_FAKE = "Fake";
+    public static final String BLOCK_BLINK = "Blink";
 
     private static final String ROTATION_SMOOTHING_GROUP = "Rotation Smoothing";
     private static final String RANGE_GROUP = "Range";
     private static final String TARGETS_GROUP = "Targets";
     private static final String CONDITIONS_GROUP = "Conditions";
     private static final String BLOCKING_GROUP = "Blocking";
+    /** A Blink block is held this many ticks, then released for this many ticks. */
+    private static final int BLINK_BLOCK_TICKS = 4;
+    private static final int BLINK_GAP_TICKS = 2;
     /** How long the view may take easing back to the camera, in ticks. */
     private static final int MAX_RETURN_TICKS = 60;
 
@@ -115,7 +120,7 @@ public class KillAura extends Module {
     private final BooleanSetting weaponOnlySetting = new BooleanSetting("Weapon Only", false);
     private final BooleanSetting blockingEnabledSetting = new BooleanSetting("Blocking", false);
     private final ModeSetting blockingModeSetting = new ModeSetting("Block Mode",
-            new String[]{BLOCK_PACKET, BLOCK_VANILLA, BLOCK_FAKE}, 0);
+            new String[]{BLOCK_PACKET, BLOCK_VANILLA, BLOCK_FAKE, BLOCK_BLINK}, 0);
     private final SliderSetting blockRangeSetting = new SliderSetting("Block Range", 6.0, 0.0, 8.0, 0.1);
     private final BooleanSetting onMouseDownSetting = new BooleanSetting("On Mouse Down", true);
     private final BooleanSetting stopOnBlockSetting = new BooleanSetting("Stop on Block", false);
@@ -152,6 +157,10 @@ public class KillAura extends Module {
     private int lastBlockPacketTick = -1;
     /** Tick on which a block released for an attack may be started again. */
     private int restartAutoBlockTick = -1;
+    /** Blink blocking: the server block is pulsed while C03 packets are held. */
+    private boolean blinkBlockActive;
+    private int blinkBlockStartedTick;
+    private int blinkNextBlockTick;
 
     public KillAura() {
         super("KillAura", Category.COMBAT);
@@ -216,6 +225,7 @@ public class KillAura extends Module {
         // so turning it off eases the view back instead of snapping it in one packet.
         if (!isEnabled()) {
             restoreLockViewMouse();
+            stopBlinkBlock();
             tickReturn();
             return;
         }
@@ -231,6 +241,10 @@ public class KillAura extends Module {
             return;
         }
 
+        // A Blink block must never outlive the setting that owns it, even when there is no
+        // attack target and the normal maintain path is skipped below.
+        if (!blockingEnabled() || !BLOCK_BLINK.equals(blockingMode())) stopBlinkBlock();
+
         List<TargetCandidate> candidates = findTargets();
         if (candidates.isEmpty()) {
             targets.clear();
@@ -240,8 +254,12 @@ public class KillAura extends Module {
             restoreLockViewMouse();
             // Block Range can cover a threat before it reaches attack Range. Keep the block
             // up even with no attack target, so a player entering the aura is already guarded.
-            if (blockingEnabled() && blockThreat() != null) maintainAutoBlock();
-            else stopAutoBlock();
+            if (blockingEnabled() && blockThreat() != null) {
+                maintainAutoBlock();
+            } else {
+                stopAutoBlock();
+                stopBlinkBlock();
+            }
             // The server's rotation goes back to the camera on its own curve; the next target
             // then picks up from wherever the view really is.
             beginReturn();
@@ -279,6 +297,9 @@ public class KillAura extends Module {
                 // interaction rate check treats a release plus a new use as two actions.
                 restartAutoBlockTick = mc.thePlayer.ticksExisted + 1;
             }
+            // Blink owns its own block state; release it before the attack packet so the
+            // server does not see the hit thrown while a use-item flag is still active.
+            if (blinkBlockActive) stopBlinkBlock();
             if (attack(current)) {
                 HitSelect.noteHit(current);
                 advanceTarget();
@@ -348,9 +369,15 @@ public class KillAura extends Module {
      */
     private void maintainAutoBlock() {
         String mode = blockingMode();
+        if (!BLOCK_BLINK.equals(mode)) stopBlinkBlock();
         // Turning On Mouse Down back on must not leave the synthetic key held down, or the
         // module would keep blocking without the interact key.
         if (onMouseDownSetting.getValue()) releaseUseKey();
+
+        if (BLOCK_BLINK.equals(mode)) {
+            maintainBlinkBlock();
+            return;
+        }
 
         if (!blockingEnabled() || !autoBlockWanted()) {
             stopAutoBlock();
@@ -420,6 +447,47 @@ public class KillAura extends Module {
     private void syncAutoBlockMode() {
         if (autoBlockActive && (!blockingEnabled() || !blockingMode().equals(autoBlockMode))) {
             stopAutoBlock();
+        }
+        if (blinkBlockActive && !BLOCK_BLINK.equals(blockingMode())) stopBlinkBlock();
+    }
+
+    /**
+     * Blink blocking: the server is told to block for a few ticks, then released. C03 is held
+     * for the whole pulse, so the server never sees the player moving while its use-item flag
+     * is up. The release flushes the held movement after C07, which is what lets the player
+     * attack and sprint away at full speed without a NoSlow movement packet.
+     */
+    private void maintainBlinkBlock() {
+        if (mc.thePlayer == null || !blockingEnabled() || !autoBlockWanted()) {
+            stopBlinkBlock();
+            return;
+        }
+
+        int tick = mc.thePlayer.ticksExisted;
+        if (blinkBlockActive) {
+            if (tick - blinkBlockStartedTick >= BLINK_BLOCK_TICKS) stopBlinkBlock();
+            return;
+        }
+        if (tick < blinkNextBlockTick || tick == lastBlockPacketTick) return;
+
+        ItemStack held = mc.thePlayer.getHeldItem();
+        if (held == null || !(held.getItem() instanceof ItemSword)) return;
+        if (!BlinkBlockQueue.beginHold()) return;
+
+        sendBlockPacket(held);
+        blinkBlockActive = true;
+        blinkBlockStartedTick = tick;
+    }
+
+    /** Ends the current Blink block, sends C07, then releases the held movement. */
+    private void stopBlinkBlock() {
+        if (!blinkBlockActive) return;
+        blinkBlockActive = false;
+        BlinkBlockQueue.stopHolding();
+        sendReleasePacket();
+        BlinkBlockQueue.flush();
+        if (mc.thePlayer != null) {
+            blinkNextBlockTick = mc.thePlayer.ticksExisted + BLINK_GAP_TICKS;
         }
     }
 
@@ -1083,6 +1151,7 @@ public class KillAura extends Module {
     private void reset() {
         restoreLockViewMouse();
         stopAutoBlock();
+        stopBlinkBlock();
         target = null;
         targets.clear();
         targetIndex = 0;
