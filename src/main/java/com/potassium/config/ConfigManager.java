@@ -92,6 +92,10 @@ public class ConfigManager {
         }
         lines.add("Hud.fps.x=" + hud.getFps().getStoredX());
         lines.add("Hud.fps.y=" + hud.getFps().getStoredY());
+        if (hud.getTargetHud().hasStoredPosition()) {
+            lines.add("Hud.targetHud.x=" + hud.getTargetHud().getStoredX());
+            lines.add("Hud.targetHud.y=" + hud.getTargetHud().getStoredY());
+        }
         lines.add("Hud.textCount=" + hud.getTexts().size());
         for (int i = 0; i < hud.getTexts().size(); i++) {
             TextHudElement text = hud.getTexts().get(i);
@@ -124,6 +128,14 @@ public class ConfigManager {
         }
         hud.getFps().setX(intValue(values, "Hud.fps.x", hud.getFps().getX()));
         hud.getFps().setY(intValue(values, "Hud.fps.y", hud.getFps().getY()));
+        if (values.containsKey("Hud.targetHud.x")) {
+            hud.getTargetHud().setX(intValue(values, "Hud.targetHud.x",
+                    hud.getTargetHud().getX()));
+        }
+        if (values.containsKey("Hud.targetHud.y")) {
+            hud.getTargetHud().setY(intValue(values, "Hud.targetHud.y",
+                    hud.getTargetHud().getY()));
+        }
 
         hud.clearTexts();
         int count = Math.max(0, intValue(values, "Hud.textCount", 0));
