@@ -6,6 +6,7 @@ import com.potassium.settings.RangeSetting;
 import com.potassium.settings.Setting;
 import com.potassium.settings.SliderSetting;
 import com.potassium.util.ClickState;
+import com.potassium.util.CombatArbiter;
 import com.potassium.util.MovementInputStack;
 import com.potassium.util.RotationUtil;
 import com.potassium.util.SilentLook;
@@ -160,6 +161,8 @@ public class Scaffold extends Module {
     private final ModeSetting rotationModeSetting = new ModeSetting("Rotation Mode",
             new String[]{AIM_CENTER, AIM_RANDOM, AIM_STABILIZED, AIM_NEAREST,
                     AIM_REVERSE_YAW, AIM_DIAGONAL_YAW, AIM_ANGLE_YAW, AIM_EDGE_POINT}, 2);
+    private final BooleanSetting faceBackwardSetting =
+            new BooleanSetting("Face Backward", false);
     private final ModeSetting movementFixSetting = new ModeSetting("Movement Fix",
             new String[]{MOVE_FIX_NONE, MOVE_FIX_STRICT}, 1);
     private final SliderSetting rangeSetting = new SliderSetting("Range", 4.5, 1.0, 6.0, 0.1);
@@ -205,6 +208,9 @@ public class Scaffold extends Module {
     private float aimYaw = Float.NaN;
     private float aimPitch = Float.NaN;
     private boolean aimRequestedThisTick;
+    // True when this tick's server rotation is the one Scaffold asked for. A higher claim,
+    // such as KillAura's target aim, owns the packet instead and no click may go out.
+    private boolean ownsAimThisTick;
     private int lastAimTargetTick = -100;
     // The last silent aim requested, which this tick's movement packet carries. Candidates are
     // ranked against it so the next aim stays close to the rotation the server already has.
@@ -245,6 +251,7 @@ public class Scaffold extends Module {
         settings.add(yawSpeedSetting);
         settings.add(pitchSpeedSetting);
         settings.add(rotationModeSetting);
+        settings.add(faceBackwardSetting);
         settings.add(movementFixSetting);
         settings.add(rangeSetting);
         settings.add(minDistSetting);
@@ -315,10 +322,25 @@ public class Scaffold extends Module {
         return MOVE_FIX_STRICT.equals(movementFixSetting.getValue());
     }
 
+    /** True while the module holds a server-side rotation, for a placement or for a pose. */
+    private boolean silentAimActive() {
+        return ROTATION_NORMAL.equals(rotationSetting.getValue()) || faceBackward();
+    }
+
+    private boolean faceBackward() {
+        return faceBackwardSetting.getValue();
+    }
+
+    /** The camera's yaw turned around: the look the server keeps while Face Backward is on. */
+    private float backwardYaw() {
+        return MathHelper.wrapAngleTo180_float(SilentLook.cameraYaw() + 180.0F);
+    }
+
     @SubscribeEvent
     public void onTick(TickEvent.ClientTickEvent event) {
         if (event.phase != TickEvent.Phase.START) return;
         aimRequestedThisTick = false;
+        ownsAimThisTick = false;
         if (!isEnabled()) {
             sprintSuppressed = false;
             return;
@@ -425,6 +447,9 @@ public class Scaffold extends Module {
         if (normalPlacementTick == tick) return;
         if (tick - lastPlaceTick < placementDelay()) return;
         if (!aimArrived) return;
+        // A click only makes sense from the rotation the server actually received. When
+        // another module outranked Scaffold this tick, that look belongs to that module.
+        if (silentAimActive() && !ownsAimThisTick) return;
         // The click packet leaves before this tick's look reaches the server, so the
         // interaction is checked against the rotation the server already has. Placing while
         // that rotation is not on the face is what NCP's direction checks cancel, and a
@@ -788,7 +813,7 @@ public class Scaffold extends Module {
      * at the face, which is what the placement waits for.
      */
     private boolean turnAim(EntityPlayerSP player, Placement placement) {
-        if (ROTATION_OFF.equals(rotationSetting.getValue())) return true;
+        if (!silentAimActive()) return true;
         lastAimTargetTick = player.ticksExisted;
 
         if (Float.isNaN(aimYaw)) {
@@ -796,18 +821,25 @@ public class Scaffold extends Module {
             aimPitch = Float.isNaN(sentAimPitch) ? player.rotationPitch : sentAimPitch;
         }
 
+        // Face Backward pins the yaw to the camera's opposite while the pitch still follows
+        // the face, so the server keeps seeing the backward look and the ray can still reach
+        // a block that is steeply below, which is the pose a bridge is placed from.
+        float targetYaw = faceBackward() ? backwardYaw() : placement.rotations[0];
+        float[] target = {targetYaw, placement.rotations[1]};
+
         // The aim rides the client's own movement packet instead of a look before the
         // placement and another one back after it; that pair put two extra position updates in
         // the tick, which packet rate checks count as timer abuse. The placement goes out in
         // the same pre-motion window Raven uses, and every step is rounded to whole mouse
         // counts so the deltas the server sees stay legal.
-        float[] rotations = snapToSentAim(smoothingStep(placement.rotations[0], placement.rotations[1]));
-        applyAim(rotations);
+        float[] rotations = snapToSentAim(smoothingStep(target[0], target[1]));
+        if (faceBackward()) rotations[0] = targetYaw;
+        applyAim(rotations, CombatArbiter.PRIORITY_MOVEMENT);
 
         // Clicking while the look has not arrived at the face yet is the shape a rotation
         // check drops, so the caller waits for the aim to reach the block. Without the sight
         // requirement there is no ray to wait for, so the aim reaching the rotation is enough.
-        if (!requiresSightSetting.getValue()) return hasArrived(rotations, placement.rotations);
+        if (!requiresSightSetting.getValue()) return hasArrived(rotations, target);
         return rayHits(player, rotations[0], rotations[1], placement.position, placement.side);
     }
 
@@ -822,7 +854,7 @@ public class Scaffold extends Module {
      * Hands the tick's rotation to the packet layer. sentAim is the rotation the server is
      * being given this tick, so the next face is picked against it, not against the camera.
      */
-    private void applyAim(float[] rotations) {
+    private void applyAim(float[] rotations, int priority) {
         aimYaw = rotations[0];
         aimPitch = rotations[1];
         // Strict computes the tick's walk from this rotation. That only makes sense while the
@@ -832,11 +864,15 @@ public class Scaffold extends Module {
         boolean strict = isStrictMovementFix()
                 && Math.abs(MathHelper.wrapAngleTo180_float(
                         rotations[0] - SilentLook.cameraYaw())) <= 45.0F;
-        SilentLook.request(rotations[0], rotations[1],
+        // The arbiter hands the tick to one aim only. If a higher claim took it, this
+        // rotation never reaches the packet and sentAim must keep saying so.
+        boolean claimed = SilentLook.request("Scaffold", priority, rotations[0], rotations[1],
                 strict ? SilentLook.MovementFix.STRICT : SilentLook.MovementFix.NONE);
+        ownsAimThisTick = claimed;
+        aimRequestedThisTick = claimed;
+        if (!claimed) return;
         sentAimYaw = rotations[0];
         sentAimPitch = rotations[1];
-        aimRequestedThisTick = true;
     }
 
     /**
@@ -847,20 +883,34 @@ public class Scaffold extends Module {
      * own rotation is what goes out again.
      */
     private void returnAim(EntityPlayerSP player) {
-        if (ROTATION_OFF.equals(rotationSetting.getValue())) {
+        if (!silentAimActive()) {
             aimYaw = Float.NaN;
             aimPitch = Float.NaN;
             return;
         }
-        if (Float.isNaN(aimYaw)) return;
+        if (Float.isNaN(aimYaw)) {
+            if (!faceBackward()) return;
+            aimYaw = SilentLook.cameraYaw();
+            aimPitch = SilentLook.cameraPitch();
+        }
         // Another module is aiming this tick; its rotation is the one that should go out, not
         // a return to the camera.
         if (SilentLook.isRequested()) return;
 
+        // Face Backward is a pose, not a placement: with nothing to click the server keeps
+        // the backward yaw and the camera's pitch until the setting or the module is off.
+        if (faceBackward()) {
+            float targetYaw = backwardYaw();
+            float[] rotations = smoothingStep(targetYaw, SilentLook.cameraPitch());
+            rotations[0] = targetYaw;
+            applyAim(rotations, CombatArbiter.PRIORITY_POSE);
+            return;
+        }
+
         // A target that blinks out for a tick, like the cell behind a block just placed, is
         // not a reason to start leaving. Hold the view there until it is really gone.
         if (player.ticksExisted - lastAimTargetTick <= AIM_HOLD_TICKS) {
-            applyAim(new float[]{aimYaw, aimPitch});
+            applyAim(new float[]{aimYaw, aimPitch}, CombatArbiter.PRIORITY_POSE);
             return;
         }
 
@@ -878,7 +928,8 @@ public class Scaffold extends Module {
             return;
         }
 
-        applyAim(snapToSentAim(smoothingStep(cameraYaw, cameraPitch)));
+        applyAim(snapToSentAim(smoothingStep(cameraYaw, cameraPitch)),
+                CombatArbiter.PRIORITY_RETURN);
     }
 
     /**
@@ -1462,6 +1513,7 @@ public class Scaffold extends Module {
         sentAimYaw = Float.NaN;
         sentAimPitch = Float.NaN;
         sprintSuppressed = false;
+        ownsAimThisTick = false;
         placementsSinceEnable = 0;
         resetSneak();
     }
@@ -1478,6 +1530,7 @@ public class Scaffold extends Module {
         launchY = Integer.MIN_VALUE;
         aimYaw = Float.NaN;
         aimPitch = Float.NaN;
+        ownsAimThisTick = false;
         sentAimYaw = Float.NaN;
         sentAimPitch = Float.NaN;
         resetSneak();

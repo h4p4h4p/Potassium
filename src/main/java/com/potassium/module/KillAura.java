@@ -7,6 +7,7 @@ import com.potassium.settings.Setting;
 import com.potassium.settings.SliderSetting;
 import com.potassium.util.BlinkBlockQueue;
 import com.potassium.util.ClickState;
+import com.potassium.util.CombatArbiter;
 import com.potassium.util.Friends;
 import com.potassium.util.RotationSmoother;
 import com.potassium.util.RotationUtil;
@@ -1025,12 +1026,20 @@ public class KillAura extends Module {
      * moves on.
      */
     private void requestSilentAim() {
+        requestSilentAim(CombatArbiter.PRIORITY_COMBAT);
+    }
+
+    /**
+     * Hands this tick's aim to the arbiter at the given rank: a target aim outranks a
+     * placement, while easing back to the camera yields to both.
+     */
+    private void requestSilentAim(int priority) {
         float yaw = aim.yaw();
         float pitch = aim.pitch();
         float baseYaw = sentInitialised ? sentYaw : yaw;
         float basePitch = sentInitialised ? sentPitch : pitch;
         float[] snapped = RotationUtil.snapToMouse(yaw, pitch, baseYaw, basePitch);
-        SilentLook.request(snapped[0], snapped[1], movementFix());
+        SilentLook.request("KillAura", priority, snapped[0], snapped[1], movementFix());
     }
 
     /**
@@ -1082,8 +1091,9 @@ public class KillAura extends Module {
             return;
         }
 
-        // Another module is aiming this tick; its rotation is the one that should go out.
-        if (!SilentLook.isRequested()) requestSilentAim();
+        // Another module may already own this tick's rotation. Returning is the lowest claim,
+        // so the arbiter keeps that aim and drops this one instead of overwriting it.
+        requestSilentAim(CombatArbiter.PRIORITY_RETURN);
     }
 
     private void endReturn() {

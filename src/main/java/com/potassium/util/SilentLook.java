@@ -93,19 +93,29 @@ public final class SilentLook {
      * Asks for this tick's server rotation. Renew it every tick that a module is aiming;
      * a tick without a request simply leaves the camera rotation in place.
      *
+     * <p>The request takes the tick through {@link CombatArbiter} first. Only one aim fits
+     * into the packet, so a module whose claim loses is told its rotation will not be used
+     * instead of silently overwriting the module that got there first.
+     *
+     * @param source   the module asking; the arbiter reports it as the tick's owner
+     * @param priority how badly that module needs the tick, see the CombatArbiter constants
      * @param fix LiquidBounce's movement correction for this aim: Strict moves along the aim,
      *            Silent keeps the camera direction but turns the keys into the aim's frame,
      *            None sends the aim without changing how the player walks
+     * @return true when this aim is the one the tick's movement packet will carry
      */
-    public static void request(float yaw, float pitch, MovementFix fix) {
+    public static boolean request(String source, int priority, float yaw, float pitch,
+                                  MovementFix fix) {
+        if (!CombatArbiter.claimRotation(source, priority)) return false;
         register();
         aimYaw = yaw;
         aimPitch = MathHelper.clamp_float(pitch, -90.0F, 90.0F);
         movementFix = fix == null ? MovementFix.NONE : fix;
         requested = true;
+        return true;
     }
 
-    /** Whether a module has already claimed this tick's server rotation. */
+    /** Whether any module owns this tick's server rotation. */
     public static boolean isRequested() {
         return requested;
     }
