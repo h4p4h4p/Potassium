@@ -8,7 +8,6 @@ import com.potassium.settings.SelectSetting;
 import com.potassium.settings.Setting;
 import com.potassium.settings.SliderSetting;
 import com.potassium.settings.StringSetting;
-import com.potassium.util.RenderUtil;
 
 public abstract class Widget {
 
@@ -32,13 +31,6 @@ public abstract class Widget {
 
     public boolean contains(float mx, float my) {
         return mx >= x && mx <= x + width && my >= y && my <= y + height;
-    }
-
-    /** Small accent square after the label showing the value differs from the shipped default. */
-    protected void drawModifiedMarker(boolean modified, String name) {
-        if (!modified) return;
-        float mx = x + 8 + RenderUtil.getGuiTextWidth(name);
-        RenderUtil.drawRect(mx, y + (height - 3) / 2f, 3, 3, MARKER);
     }
 
     /** The text field inside this widget that is capturing keys right now, if any. */

@@ -56,7 +56,6 @@ public class SelectWidget extends Widget {
     public void draw(float mx, float my) {
         boolean hovered = contains(mx, my) || (open == this && insideList(mx, my));
         RenderUtil.drawGuiString(setting.getName(), x + 6, RenderUtil.guiTextY(y, height), hovered ? Theme.TEXT : Theme.TEXT_GRAY);
-        drawModifiedMarker(!setting.isDefault(), setting.getName());
 
         float fieldX = x + width - 6 - fieldW();
         RenderUtil.drawRect(fieldX, y + 1, fieldW(), height - 2,
@@ -215,7 +214,6 @@ public class SelectWidget extends Widget {
 
     @Override
     public float getPreferredWidth() {
-        float marker = setting.isDefault() ? 0 : 7;
-        return Math.max(120, RenderUtil.getGuiTextWidth(setting.getName()) + marker + 14 + fieldW());
+        return Math.max(120, RenderUtil.getGuiTextWidth(setting.getName()) + 14 + fieldW());
     }
 }

@@ -51,7 +51,6 @@ public class RangeWidget extends Widget implements TextInput {
         float highX = knobX(setting.getHigh());
 
         RenderUtil.drawGuiString(setting.getName(), x + 6, RenderUtil.guiTextY(y, height), hovered ? Theme.TEXT : Theme.TEXT_GRAY);
-        drawModifiedMarker(!setting.isDefault(), setting.getName());
 
         RenderUtil.drawRect(trackX, y + height / 2f - 2f, trackW, 4, Theme.TRACK);
         if (highX - lowX > 0.5f) {
@@ -101,7 +100,6 @@ public class RangeWidget extends Widget implements TextInput {
 
     private void computeTrack() {
         float labelZone = RenderUtil.getGuiTextWidth(setting.getName()) + 10;
-        if (!setting.isDefault()) labelZone += 7;
         trackX = x + labelZone;
         float valueWidth = RenderUtil.getGuiTextWidth(display());
         trackW = Math.max((x + width - 12 - valueWidth) - trackX, 12);

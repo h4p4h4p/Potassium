@@ -62,13 +62,6 @@ public class SettingsDropdown extends Widget {
         return h;
     }
 
-    private boolean anyModified() {
-        for (Setting setting : settings) {
-            if (!setting.isDefault()) return true;
-        }
-        return false;
-    }
-
     @Override
     public void draw(float mx, float my) {
         boolean hovered = mx >= x && mx <= x + width && my >= y && my <= y + ROW;
@@ -76,7 +69,6 @@ public class SettingsDropdown extends Widget {
 
         RenderUtil.drawGuiString(title, x + 6, y + (ROW - RenderUtil.getGuiTextHeight()) / 2f,
                 hovered ? Theme.TEXT : Theme.TEXT_DIM);
-        drawModifiedMarker(anyModified(), title);
 
         float caretX = x + width - 10;
         float caretY = y + ROW / 2f - CARET_H / 2f;

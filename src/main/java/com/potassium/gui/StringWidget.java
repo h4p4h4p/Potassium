@@ -30,7 +30,6 @@ public class StringWidget extends Widget implements TextInput {
     @Override
     public void draw(float mx, float my) {
         RenderUtil.drawGuiString(setting.getName(), x + 6, RenderUtil.guiTextY(y, height), Theme.TEXT_GRAY);
-        drawModifiedMarker(!setting.isDefault(), setting.getName());
 
         float fieldX = fieldX();
         float fieldY = y + 1;
@@ -79,7 +78,6 @@ public class StringWidget extends Widget implements TextInput {
      */
     private float fieldX() {
         float labelEnd = x + 6f + RenderUtil.getGuiTextWidth(setting.getName()) + LABEL_GAP;
-        if (!setting.isDefault()) labelEnd += 7f;
         float right = x + width - FIELD_RIGHT_PAD;
         return Math.min(Math.max(labelEnd, right - FIELD_MAX_WIDTH), right - FIELD_MIN_WIDTH);
     }

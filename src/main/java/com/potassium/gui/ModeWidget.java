@@ -53,7 +53,6 @@ public class ModeWidget extends Widget {
     public void draw(float mx, float my) {
         boolean hovered = contains(mx, my) || (open == this && insideList(mx, my));
         RenderUtil.drawGuiString(setting.getName(), x + 6, RenderUtil.guiTextY(y, height), hovered ? Theme.TEXT : Theme.TEXT_GRAY);
-        drawModifiedMarker(!setting.isDefault(), setting.getName());
 
         float fieldX = x + width - 6 - fieldW();
         RenderUtil.drawRect(fieldX, y + 1, fieldW(), height - 2,
@@ -158,12 +157,11 @@ public class ModeWidget extends Widget {
 
     @Override
     public float getPreferredWidth() {
-        float marker = setting.isDefault() ? 0 : 7;
         float widest = RenderUtil.getGuiTextWidth(ModeSetting.UNSET_LABEL);
         for (String option : setting.getOptions()) {
             widest = Math.max(widest, RenderUtil.getGuiTextWidth(option));
         }
         // Wide enough for the label, the widest option once opened, and the caret.
-        return Math.max(120, RenderUtil.getGuiTextWidth(setting.getName()) + marker + 14 + widest + 10 + CARET_W);
+        return Math.max(120, RenderUtil.getGuiTextWidth(setting.getName()) + 14 + widest + 10 + CARET_W);
     }
 }

@@ -15,7 +15,6 @@ public class BooleanWidget extends Widget {
     @Override
     public void draw(float mx, float my) {
         RenderUtil.drawGuiString(setting.getName(), x + 6, RenderUtil.guiTextY(y, height), Theme.TEXT_GRAY);
-        drawModifiedMarker(!setting.isDefault(), setting.getName());
 
         float sw = 18;
         float sh = 7;

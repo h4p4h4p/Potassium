@@ -58,7 +58,6 @@ public class SliderWidget extends Widget implements TextInput {
         }
 
         RenderUtil.drawGuiString(setting.getName(), x + 6, RenderUtil.guiTextY(y, height), hovered ? Theme.TEXT : Theme.TEXT_GRAY);
-        drawModifiedMarker(!setting.isDefault(), setting.getName());
 
         double range = setting.getMax() - setting.getMin();
         double frac = range == 0.0D ? 0.0D : (setting.getValue() - setting.getMin()) / range;
@@ -113,7 +112,6 @@ public class SliderWidget extends Widget implements TextInput {
 
     private void computeTrack() {
         float labelZone = RenderUtil.getGuiTextWidth(setting.getName()) + 10;
-        if (!setting.isDefault()) labelZone += 7;
         trackX = x + labelZone;
         float maxVw = Math.max(RenderUtil.getGuiTextWidth(formatMaxValue()), RenderUtil.getGuiTextWidth(display()));
         trackW = Math.max((x + width - 12 - maxVw) - trackX, 4);
@@ -126,9 +124,8 @@ public class SliderWidget extends Widget implements TextInput {
 
     @Override
     public float getPreferredWidth() {
-        float marker = setting.isDefault() ? 0 : 7;
         float valueWidth = Math.max(RenderUtil.getGuiTextWidth(formatMaxValue()), RenderUtil.getGuiTextWidth(display()));
-        return Math.max(110, RenderUtil.getGuiTextWidth(setting.getName()) + marker + 10 + 48 + valueWidth + 10);
+        return Math.max(110, RenderUtil.getGuiTextWidth(setting.getName()) + 10 + 48 + valueWidth + 10);
     }
 
     private boolean onTrack(float mx, float my) {

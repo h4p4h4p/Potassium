@@ -24,7 +24,6 @@ public class ColorWidget extends Widget implements TextInput {
     public void draw(float mx, float my) {
         boolean hovered = contains(mx, my);
         RenderUtil.drawGuiString(setting.getName(), x + 6, RenderUtil.guiTextY(y, height), hovered ? Theme.TEXT : Theme.TEXT_GRAY);
-        drawModifiedMarker(!setting.isDefault(), setting.getName());
 
         int shown = currentColor();
         String hex = text();
@@ -101,8 +100,7 @@ public class ColorWidget extends Widget implements TextInput {
 
     @Override
     public float getPreferredWidth() {
-        float marker = setting.isDefault() ? 0 : 7;
-        return Math.max(120, RenderUtil.getGuiTextWidth(setting.getName()) + marker + 10
+        return Math.max(120, RenderUtil.getGuiTextWidth(setting.getName()) + 10
                 + SWATCH + GAP + RenderUtil.getGuiTextWidth("FFFFFF") + 12);
     }
 
