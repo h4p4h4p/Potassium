@@ -116,6 +116,7 @@ public class KillAura extends Module {
     private final SliderSetting blockRangeSetting = new SliderSetting("Block Range", 6.0, 0.0, 8.0, 0.1);
     private final BooleanSetting onMouseDownSetting = new BooleanSetting("On Mouse Down", true);
     private final BooleanSetting stopOnBlockSetting = new BooleanSetting("Stop on Block", false);
+    private final BooleanSetting holdAttackSetting = new BooleanSetting("Hold Attack", false);
     private final ModeSetting movementFixSetting = new ModeSetting("Movement Fix",
             new String[]{MOVE_FIX_NONE, MOVE_FIX_SILENT, MOVE_FIX_STRICT}, 1);
 
@@ -168,6 +169,7 @@ public class KillAura extends Module {
         wallCheckSetting.setGroup(CONDITIONS_GROUP);
         weaponOnlySetting.setGroup(CONDITIONS_GROUP);
         stopOnBlockSetting.setGroup(CONDITIONS_GROUP);
+        holdAttackSetting.setGroup(CONDITIONS_GROUP);
         blockingEnabledSetting.setGroup(BLOCKING_GROUP);
         blockingModeSetting.setGroup(BLOCKING_GROUP);
         blockRangeSetting.setGroup(BLOCKING_GROUP);
@@ -193,6 +195,7 @@ public class KillAura extends Module {
         settings.add(wallCheckSetting);
         settings.add(weaponOnlySetting);
         settings.add(stopOnBlockSetting);
+        settings.add(holdAttackSetting);
         settings.add(blockingEnabledSetting);
         settings.add(blockingModeSetting);
         settings.add(blockRangeSetting);
@@ -257,7 +260,7 @@ public class KillAura extends Module {
         // arrived after the flying packet and read as a post-movement attack.
         EntityLivingBase current = target;
         boolean attackNow = !stopOnBlock() && !usingOtherItem() && canAttack(current)
-                && clickDue();
+                && (!holdAttackSetting.getValue() || attackKeyHeld()) && clickDue();
         if (attackNow) {
             // Packet modes deliberately keep the server-side block through the hit; every
             // other mode releases it so the client attack matches the packet it sends.
@@ -274,6 +277,14 @@ public class KillAura extends Module {
         // Lock View sets the camera at the same frame the mouse input is sampled; Silent keeps
         // its own aim for the packet. Either way the aim is chosen once for this tick.
         aimAt(current);
+    }
+
+    /**
+     * Hold Attack gates every swing on the attack key, so the aura keeps aiming and blocking
+     * but only hits while the player is holding the button themselves.
+     */
+    private boolean attackKeyHeld() {
+        return mc.gameSettings != null && mc.gameSettings.keyBindAttack.isKeyDown();
     }
 
     /**
