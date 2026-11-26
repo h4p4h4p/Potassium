@@ -7,7 +7,9 @@ import com.potassium.hud.HudEditOverlay;
 import com.potassium.hud.HudManager;
 import com.potassium.module.Module;
 import com.potassium.module.ModuleManager;
+import com.potassium.util.Friends;
 import com.potassium.util.MovementInputStack;
+import com.potassium.util.UpdateChecker;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiChat;
 import net.minecraft.client.settings.KeyBinding;
@@ -57,6 +59,8 @@ public class Potassium {
         hudEditOverlay = new HudEditOverlay(hudManager);
         configManager = new ConfigManager();
         configManager.load(moduleManager, hudManager);
+        Friends.load();
+        UpdateChecker.start();
     }
 
     public static void scheduleSave() {
@@ -85,6 +89,7 @@ public class Potassium {
             }
         }
         updateModuleKeys();
+        UpdateChecker.tick();
     }
 
     private void updateModuleKeys() {

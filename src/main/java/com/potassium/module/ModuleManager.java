@@ -18,7 +18,10 @@ public class ModuleManager {
         modules.add(new FastBreak());
         modules.add(new Blink());
         modules.add(new FakeLag());
+        modules.add(new AimAssist());
+        modules.add(new HitSelect());
         modules.add(new KillAura());
+        modules.add(new TargetStrafe());
         modules.add(new LeftClicker());
         modules.add(new AntiBot());
         modules.add(new Criticals());
@@ -29,6 +32,7 @@ public class ModuleManager {
         modules.add(new AntiKnockback());
         modules.add(new Backtrack());
         modules.add(new Esp());
+        modules.add(new TargetHud());
         modules.add(new StorageESP());
         modules.add(new Scoreboard());
         modules.add(new Fullbright());
@@ -42,6 +46,7 @@ public class ModuleManager {
         modules.add(new Flight());
         modules.add(new AntiVoid());
         modules.add(new NoFall());
+        modules.add(new OnlineConfig());
     }
 
     public List<Module> getModules() {

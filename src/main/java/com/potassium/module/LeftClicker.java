@@ -7,6 +7,7 @@ import com.potassium.settings.SliderSetting;
 import com.potassium.util.ClickState;
 import net.minecraft.client.Minecraft;
 import net.minecraft.entity.Entity;
+import net.minecraft.entity.EntityLivingBase;
 import net.minecraft.item.Item;
 import net.minecraft.item.ItemAxe;
 import net.minecraft.item.ItemStack;
@@ -117,7 +118,15 @@ public class LeftClicker extends Module {
             if (!ClickState.canAttack(tick)) return;
 
             if (clickDue()) {
+                EntityLivingBase hit = entityUnderCursor();
+                if (hit != null && HitSelect.suppressing(hit)) {
+                    HitSelect.fakeSwing();
+                    lastAttackTick = tick;
+                    return;
+                }
+                if (hit != null) HitSelect.consumeSecondHit(hit);
                 blockHitClick();
+                if (hit != null) HitSelect.noteHit(hit);
                 lastAttackTick = tick;
             }
             return;
@@ -133,9 +142,28 @@ public class LeftClicker extends Module {
         if (!ClickState.canAttack(tick)) return;
 
         if (clickDue()) {
+            EntityLivingBase hit = entityUnderCursor();
+            if (hit != null && HitSelect.suppressing(hit)) {
+                HitSelect.fakeSwing();
+                lastAttackTick = tick;
+                return;
+            }
+            if (hit != null) HitSelect.consumeSecondHit(hit);
             click();
+            if (hit != null) HitSelect.noteHit(hit);
             lastAttackTick = tick;
         }
+    }
+
+    /** The living entity the click would hit, if any. */
+    private EntityLivingBase entityUnderCursor() {
+        MovingObjectPosition over = mc.objectMouseOver;
+        if (over == null
+                || over.typeOfHit != MovingObjectPosition.MovingObjectType.ENTITY
+                || !(over.entityHit instanceof EntityLivingBase)) {
+            return null;
+        }
+        return (EntityLivingBase) over.entityHit;
     }
 
     /**

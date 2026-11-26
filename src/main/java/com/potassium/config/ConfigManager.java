@@ -13,6 +13,7 @@ import java.io.File;
 import java.io.IOException;
 import java.nio.charset.Charset;
 import java.nio.file.Files;
+import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -27,6 +28,31 @@ public class ConfigManager {
 
     public ConfigManager() {
         this.file = new File(Minecraft.getMinecraft().mcDataDir, "config/potassium.cfg");
+    }
+
+    /**
+     * Applies a config downloaded from the Configurations panel.
+     *
+     * <p>The previous file is kept as {@code potassium.cfg.bak}: an online config replaces
+     * every module state at once, so there has to be a way back without rebuilding the setup
+     * by hand. The text is written through the normal file path and then loaded by the same
+     * code as a startup config, so version migrations and HUD positions behave identically.</p>
+     */
+    public boolean importText(String text, ModuleManager modules, HudManager hud) {
+        if (text == null || text.trim().isEmpty()) return false;
+        try {
+            File parent = file.getParentFile();
+            if (parent != null && !parent.exists()) parent.mkdirs();
+            if (file.exists()) {
+                File backup = new File(parent, "potassium.cfg.bak");
+                Files.copy(file.toPath(), backup.toPath(), StandardCopyOption.REPLACE_EXISTING);
+            }
+            Files.write(file.toPath(), text.getBytes(Charset.forName("UTF-8")));
+            load(modules, hud);
+            return true;
+        } catch (IOException e) {
+            return false;
+        }
     }
 
     public void save(ModuleManager modules, HudManager hud) {

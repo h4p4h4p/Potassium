@@ -6,6 +6,7 @@ import com.potassium.settings.RangeSetting;
 import com.potassium.settings.Setting;
 import com.potassium.settings.SliderSetting;
 import com.potassium.util.ClickState;
+import com.potassium.util.Friends;
 import com.potassium.util.RotationSmoother;
 import com.potassium.util.RotationUtil;
 import com.potassium.util.SilentLook;
@@ -54,6 +55,8 @@ import java.util.List;
  * between hits through the Blocking settings group.
  */
 public class KillAura extends Module {
+
+    private static KillAura instance;
 
     public static final String ROTATION_LOCK_VIEW = "Lock View";
     public static final String ROTATION_SILENT = "Silent";
@@ -152,6 +155,7 @@ public class KillAura extends Module {
 
     public KillAura() {
         super("KillAura", Category.COMBAT);
+        instance = this;
         smoothingSetting.setGroup(ROTATION_SMOOTHING_GROUP);
         horizontalSpeedSetting.setGroup(ROTATION_SMOOTHING_GROUP);
         verticalSpeedSetting.setGroup(ROTATION_SMOOTHING_GROUP);
@@ -261,7 +265,12 @@ public class KillAura extends Module {
         EntityLivingBase current = target;
         boolean attackNow = !stopOnBlock() && !usingOtherItem() && canAttack(current)
                 && (!holdAttackSetting.getValue() || attackKeyHeld()) && clickDue();
+        if (attackNow && HitSelect.suppressing(current)) {
+            HitSelect.fakeSwing();
+            attackNow = false;
+        }
         if (attackNow) {
+            HitSelect.consumeSecondHit(current);
             // Packet modes deliberately keep the server-side block through the hit; every
             // other mode releases it so the client attack matches the packet it sends.
             if (autoBlockActive && !isPacketMode(autoBlockMode)) {
@@ -270,7 +279,10 @@ public class KillAura extends Module {
                 // interaction rate check treats a release plus a new use as two actions.
                 restartAutoBlockTick = mc.thePlayer.ticksExisted + 1;
             }
-            if (attack(current)) advanceTarget();
+            if (attack(current)) {
+                HitSelect.noteHit(current);
+                advanceTarget();
+            }
         }
         maintainAutoBlock();
 
@@ -631,6 +643,7 @@ public class KillAura extends Module {
             EntityPlayer player = (EntityPlayer) living;
             if (player.isSpectator()) return false;
             if (!playersSetting.getValue()) return false;
+            if (Friends.isFriend(player)) return false;
             if (!teammatesSetting.getValue() && mc.thePlayer.isOnSameTeam(player)) return false;
         } else {
             boolean hostile = living instanceof IMob || living instanceof EntityIronGolem;
@@ -1115,6 +1128,16 @@ public class KillAura extends Module {
             return isSilentRotations() && isLegitSmoothing();
         }
         return true;
+    }
+
+    /** The aura instance, used by TargetHUD and TargetStrafe. */
+    public static KillAura instance() {
+        return instance;
+    }
+
+    /** The target the aura is aiming at, or null when it has none. */
+    public EntityLivingBase getTarget() {
+        return target;
     }
 
     /** How many targets the aura currently has in its cycle. */
