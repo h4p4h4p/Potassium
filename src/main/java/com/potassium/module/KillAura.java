@@ -18,7 +18,11 @@ import net.minecraft.item.Item;
 import net.minecraft.item.ItemAxe;
 import net.minecraft.item.ItemStack;
 import net.minecraft.item.ItemSword;
+import net.minecraft.network.play.client.C07PacketPlayerDigging;
+import net.minecraft.network.play.client.C08PacketPlayerBlockPlacement;
 import net.minecraft.util.AxisAlignedBB;
+import net.minecraft.util.BlockPos;
+import net.minecraft.util.EnumFacing;
 import net.minecraft.util.MathHelper;
 import net.minecraft.util.MovingObjectPosition;
 import net.minecraft.util.Vec3;
@@ -37,7 +41,8 @@ import java.util.Locale;
  * CPS pacing.
  *
  * Up to Targets entities are kept in the cycle; each successful hit moves the aim to the next
- * one, so several targets are fought at the configured CPS.
+ * one, so several targets are fought at the configured CPS. Sword blocking can be layered
+ * between hits through the Blocking mode.
  */
 public class KillAura extends Module {
 
@@ -47,6 +52,11 @@ public class KillAura extends Module {
     public static final String MOVE_FIX_NONE = "None";
     public static final String MOVE_FIX_SILENT = "Silent";
     public static final String MOVE_FIX_STRICT = "Strict";
+
+    public static final String BLOCK_OFF = "Off";
+    public static final String BLOCK_PACKET = "Packet";
+    public static final String BLOCK_VANILLA = "Vanilla";
+    public static final String BLOCK_FAKE = "Fake";
 
     private static final String ROTATION_SMOOTHING_GROUP = "Rotation Smoothing";
     private static final String CONDITIONS_GROUP = "Conditions";
@@ -71,6 +81,8 @@ public class KillAura extends Module {
     private final BooleanSetting playersOnlySetting = new BooleanSetting("Players Only", true);
     private final BooleanSetting wallCheckSetting = new BooleanSetting("Wall Check", true);
     private final BooleanSetting weaponOnlySetting = new BooleanSetting("Weapon Only", false);
+    private final ModeSetting blockingSetting = new ModeSetting("Blocking",
+            new String[]{BLOCK_OFF, BLOCK_PACKET, BLOCK_VANILLA, BLOCK_FAKE}, 0);
     private final BooleanSetting stopOnBlockSetting = new BooleanSetting("Stop on Block", false);
     private final ModeSetting movementFixSetting = new ModeSetting("Movement Fix",
             new String[]{MOVE_FIX_NONE, MOVE_FIX_SILENT, MOVE_FIX_STRICT}, 1);
@@ -96,6 +108,10 @@ public class KillAura extends Module {
     private float sentYaw;
     private float sentPitch;
     private boolean sentInitialised;
+    /** State of the sword block the aura started, so it can release exactly that block. */
+    private boolean autoBlockActive;
+    private String autoBlockMode;
+    private ItemStack autoBlockStack;
 
     public KillAura() {
         super("KillAura", Category.COMBAT);
@@ -112,6 +128,7 @@ public class KillAura extends Module {
         settings.add(targetsSetting);
         settings.add(reachSetting);
         settings.add(fovSetting);
+        settings.add(blockingSetting);
         settings.add(cpsSetting);
         settings.add(smoothingSetting);
         settings.add(horizontalSpeedSetting);
@@ -152,6 +169,7 @@ public class KillAura extends Module {
             target = null;
             targetIndex = 0;
             clickBudget = 1.0D;
+            stopAutoBlock();
             // The server's rotation goes back to the camera on its own curve; the next target
             // then picks up from wherever the view really is.
             beginReturn();
@@ -162,15 +180,25 @@ public class KillAura extends Module {
         returning = false;
         updateTargets(candidates);
         target = targets.get(targetIndex);
+        syncAutoBlockMode();
+
+        // Packet mode blocks before the hit as well as after it: sending C08 first means the
+        // server is already blocking when the attack lands, not one packet later.
+        if (BLOCK_PACKET.equals(blockingMode())) maintainAutoBlock();
 
         // Attacking here puts the attack packet before this tick's movement packet, which is
         // the order a real click produces. Sent at the end of the tick instead, every hit
         // arrived after the flying packet and read as a post-movement attack.
         EntityLivingBase current = target;
-        if (!stopOnBlock() && !usingOtherItem() && canAttack(current)
-                && clickDue() && attack(current)) {
-            advanceTarget();
+        boolean attackNow = !stopOnBlock() && !usingOtherItem() && canAttack(current)
+                && clickDue();
+        if (attackNow) {
+            // Packet mode deliberately keeps the server-side block through the hit; every
+            // other mode releases it so the client attack matches the packet it sends.
+            if (autoBlockActive && !BLOCK_PACKET.equals(autoBlockMode)) stopAutoBlock();
+            if (attack(current)) advanceTarget();
         }
+        maintainAutoBlock();
 
         // The aim is chosen once for this tick; the smoother carries it across the frames in
         // between, and Silent samples it here so this tick's movement packet carries it.
@@ -194,9 +222,102 @@ public class KillAura extends Module {
         return mc.thePlayer.isUsingItem() && held != null && held.getItem() instanceof ItemSword;
     }
 
-    /** The optional pause while the player holds a sword block. */
+    /**
+     * The optional pause while the player holds a sword block. Auto-blocking manages its own
+     * block, so Stop on Block only applies when the Blocking setting is Off.
+     */
     private boolean stopOnBlock() {
-        return stopOnBlockSetting.getValue() && isBlockingWithSword();
+        return stopOnBlockSetting.getValue() && BLOCK_OFF.equals(blockingMode())
+                && isBlockingWithSword();
+    }
+
+    private String blockingMode() {
+        String mode = blockingSetting.getValue();
+        return mode == null ? BLOCK_OFF : mode;
+    }
+
+    /**
+     * Auto-blocking between attacks, after LiquidBounce and Rise.
+     *
+     * <p>Packet sends only C08/C07, so the server holds the block while the client keeps
+     * attacking normally; nothing slows the camera or movement. Vanilla also puts the sword
+     * in use client-side, giving the real block animation and slowdown, and releases it
+     * before each hit. Fake shows that animation without telling the server, so it is only
+     * cosmetic. All of them only run while a sword is held.</p>
+     */
+    private void maintainAutoBlock() {
+        String mode = blockingMode();
+        if (BLOCK_OFF.equals(mode) || !autoBlockWanted()) {
+            stopAutoBlock();
+            return;
+        }
+
+        if (autoBlockActive && (!mode.equals(autoBlockMode)
+                || autoBlockStack != mc.thePlayer.getHeldItem())) {
+            stopAutoBlock();
+        }
+        if (!autoBlockActive) startAutoBlock();
+    }
+
+    private boolean autoBlockWanted() {
+        if (mc.thePlayer == null || target == null) return false;
+        ItemStack held = mc.thePlayer.getHeldItem();
+        if (held == null || !(held.getItem() instanceof ItemSword)) return false;
+        // Do not block over food, a potion or a bow the player is using.
+        return !usingOtherItem();
+    }
+
+    private void syncAutoBlockMode() {
+        if (autoBlockActive && !blockingMode().equals(autoBlockMode)) stopAutoBlock();
+    }
+
+    private void startAutoBlock() {
+        ItemStack held = mc.thePlayer.getHeldItem();
+        String mode = blockingMode();
+        if (held == null || !(held.getItem() instanceof ItemSword) || BLOCK_OFF.equals(mode)) return;
+
+        // The client-side use state gives Vanilla its animation and slowdown; Fake wants the
+        // animation alone. Packet leaves the client untouched and only tells the server.
+        if (!BLOCK_PACKET.equals(mode)) {
+            mc.thePlayer.setItemInUse(held, held.getMaxItemUseDuration());
+        }
+        if (!BLOCK_FAKE.equals(mode)) {
+            sendBlockPacket(held);
+        }
+
+        autoBlockActive = true;
+        autoBlockMode = mode;
+        autoBlockStack = held;
+    }
+
+    private void stopAutoBlock() {
+        if (!autoBlockActive) return;
+
+        String mode = autoBlockMode;
+        autoBlockActive = false;
+        autoBlockMode = null;
+        autoBlockStack = null;
+
+        if (mc.thePlayer != null && !BLOCK_PACKET.equals(mode)) {
+            ItemStack using = mc.thePlayer.getItemInUse();
+            if (using != null && using.getItem() instanceof ItemSword) {
+                mc.thePlayer.stopUsingItem();
+            }
+        }
+        if (!BLOCK_FAKE.equals(mode)) sendReleasePacket();
+    }
+
+    private void sendBlockPacket(ItemStack stack) {
+        if (mc.getNetHandler() != null) {
+            mc.getNetHandler().addToSendQueue(new C08PacketPlayerBlockPlacement(stack));
+        }
+    }
+
+    private void sendReleasePacket() {
+        if (mc.getNetHandler() != null) {
+            mc.getNetHandler().addToSendQueue(new C07PacketPlayerDigging(
+                    C07PacketPlayerDigging.Action.RELEASE_USE_ITEM, BlockPos.ORIGIN, EnumFacing.DOWN));
+        }
     }
 
     /** Eating, drinking or drawing a bow; sword blocking is handled by Stop on Block. */
@@ -619,6 +740,7 @@ public class KillAura extends Module {
     }
 
     private void reset() {
+        stopAutoBlock();
         target = null;
         targets.clear();
         targetIndex = 0;
