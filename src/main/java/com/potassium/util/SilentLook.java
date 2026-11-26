@@ -75,6 +75,11 @@ public final class SilentLook {
     private static volatile float savedPrevHeadYaw;
     private static volatile float savedRenderYawOffset;
     private static volatile float savedPrevRenderYawOffset;
+    /** The first-person arm smoothing vanilla updates inside the strict-aim window. */
+    private static volatile float savedRenderArmYaw;
+    private static volatile float savedRenderArmPitch;
+    private static volatile float savedPrevRenderArmYaw;
+    private static volatile float savedPrevRenderArmPitch;
 
     /** The aim the movement packet carried this tick, or -1 when no aim was requested. */
     private static volatile int sentAimTick = -1;
@@ -230,9 +235,14 @@ public final class SilentLook {
         savedPrevHeadYaw = player.prevRotationYawHead;
         savedRenderYawOffset = player.renderYawOffset;
         savedPrevRenderYawOffset = player.prevRenderYawOffset;
+        savedRenderArmYaw = player.renderArmYaw;
+        savedRenderArmPitch = player.renderArmPitch;
+        savedPrevRenderArmYaw = player.prevRenderArmYaw;
+        savedPrevRenderArmPitch = player.prevRenderArmPitch;
     }
 
     private static void restore() {
+        boolean strict = strictApplied;
         applied = false;
         strictApplied = false;
         EntityPlayerSP player = mc.thePlayer;
@@ -246,6 +256,7 @@ public final class SilentLook {
         player.prevRotationYawHead = savedPrevHeadYaw;
         player.renderYawOffset = savedRenderYawOffset;
         player.prevRenderYawOffset = savedPrevRenderYawOffset;
+        restoreArmSway(player, strict);
     }
 
     /**
@@ -272,6 +283,34 @@ public final class SilentLook {
         player.prevRotationYawHead = savedPrevHeadYaw;
         player.renderYawOffset = savedRenderYawOffset;
         player.prevRenderYawOffset = savedPrevRenderYawOffset;
+        restoreArmSway(player, true);
+    }
+
+    /**
+     * Vanilla updates the first-person arm toward the player's current rotation inside the same
+     * player update the strict aim is installed for. Restoring only the rotation would leave
+     * {@code renderArmYaw}/{@code renderArmPitch} pulled toward the aim, making the viewmodel
+     * drift on screen while the camera itself never moves. When the strict aim was installed,
+     * recompute the arm smoothing vanilla would have produced from the camera; when it was not,
+     * put back the values saved before the packet-only aim.
+     */
+    private static void restoreArmSway(EntityPlayerSP player, boolean strict) {
+        boolean armUpdated = strict && mc.getRenderViewEntity() == player
+                && !player.isPlayerSleeping() && player.getHealth() > 0.0F;
+        if (armUpdated) {
+            player.prevRenderArmYaw = savedRenderArmYaw;
+            player.renderArmYaw = savedRenderArmYaw
+                    + (savedYaw - savedRenderArmYaw) * 0.5F;
+            player.prevRenderArmPitch = savedRenderArmPitch;
+            player.renderArmPitch = savedRenderArmPitch
+                    + (savedPitch - savedRenderArmPitch) * 0.5F;
+            return;
+        }
+
+        player.prevRenderArmYaw = savedPrevRenderArmYaw;
+        player.renderArmYaw = savedRenderArmYaw;
+        player.prevRenderArmPitch = savedPrevRenderArmPitch;
+        player.renderArmPitch = savedRenderArmPitch;
     }
 
     /**
