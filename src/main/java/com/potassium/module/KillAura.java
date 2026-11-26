@@ -12,6 +12,7 @@ import com.potassium.util.RotationUtil;
 import com.potassium.util.SilentLook;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.entity.EntityPlayerSP;
+import net.minecraft.client.settings.KeyBinding;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.EntityLivingBase;
 import net.minecraft.entity.player.EntityPlayer;
@@ -32,6 +33,8 @@ import net.minecraftforge.common.MinecraftForge;
 import net.minecraftforge.fml.common.eventhandler.EventPriority;
 import net.minecraftforge.fml.common.eventhandler.SubscribeEvent;
 import net.minecraftforge.fml.common.gameevent.TickEvent;
+import org.lwjgl.input.Keyboard;
+import org.lwjgl.input.Mouse;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -117,6 +120,9 @@ public class KillAura extends Module {
     private boolean autoBlockActive;
     private String autoBlockMode;
     private ItemStack autoBlockStack;
+    /** True while the use key is held down only because On Mouse Down is off. */
+    private boolean spoofingUseKey;
+    private int spoofedUseKeyCode;
 
     public KillAura() {
         super("KillAura", Category.COMBAT);
@@ -265,10 +271,15 @@ public class KillAura extends Module {
      * it is only cosmetic. All of them only run while a sword is held.</p>
      *
      * <p>With On Mouse Down on, this only assists a block the player is already holding;
-     * with it off, it blocks whenever the aura has a target.</p>
+     * with it off, it blocks whenever the aura has a target. The visible modes also hold the
+     * use key down client-side so vanilla does not release the block on the next input pass.</p>
      */
     private void maintainAutoBlock() {
         String mode = blockingMode();
+        // Turning On Mouse Down back on must not leave the synthetic key held down, or the
+        // module would keep blocking without the interact key.
+        if (onMouseDownSetting.getValue()) releaseUseKey();
+
         if (!blockingEnabled() || !autoBlockWanted()) {
             stopAutoBlock();
             return;
@@ -278,7 +289,13 @@ public class KillAura extends Module {
                 || autoBlockStack != mc.thePlayer.getHeldItem())) {
             stopAutoBlock();
         }
-        if (!autoBlockActive) startAutoBlock();
+        if (!autoBlockActive) {
+            startAutoBlock();
+        } else if (!BLOCK_PACKET.equals(mode) && !mc.thePlayer.isUsingItem()) {
+            // Vanilla drops item use if the use key goes up; reassert the visible block rather
+            // than leaving autoBlockActive set with no client or server block.
+            startAutoBlock();
+        }
     }
 
     private boolean autoBlockWanted() {
@@ -343,6 +360,7 @@ public class KillAura extends Module {
         // only tells the server.
         if (!BLOCK_PACKET.equals(mode)) {
             mc.thePlayer.setItemInUse(held, held.getMaxItemUseDuration());
+            holdUseKey();
         }
         if (!BLOCK_FAKE.equals(mode)) {
             sendBlockPacket(held);
@@ -354,7 +372,10 @@ public class KillAura extends Module {
     }
 
     private void stopAutoBlock() {
-        if (!autoBlockActive) return;
+        if (!autoBlockActive) {
+            releaseUseKey();
+            return;
+        }
 
         String mode = autoBlockMode;
         autoBlockActive = false;
@@ -368,6 +389,44 @@ public class KillAura extends Module {
             }
         }
         if (!BLOCK_FAKE.equals(mode)) sendReleasePacket();
+        releaseUseKey();
+    }
+
+    /**
+     * Keeps a visible auto-block alive when On Mouse Down is off. Vanilla releases an item as
+     * soon as it is in use while the use key is up, sending a C07 that defeats the client-side
+     * modes. Setting the key's held state, without adding a press to its pressTime, stops that
+     * release without firing a normal right-click.
+     */
+    private void holdUseKey() {
+        if (onMouseDownSetting.getValue()
+                || mc.gameSettings.keyBindUseItem.isKeyDown()) {
+            return;
+        }
+        int keyCode = mc.gameSettings.keyBindUseItem.getKeyCode();
+        if (keyCode == 0) return;
+        if (spoofingUseKey && spoofedUseKeyCode != keyCode) releaseUseKey();
+        KeyBinding.setKeyBindState(keyCode, true);
+        spoofingUseKey = true;
+        spoofedUseKeyCode = keyCode;
+    }
+
+    private void releaseUseKey() {
+        if (!spoofingUseKey) return;
+        spoofingUseKey = false;
+        int keyCode = spoofedUseKeyCode;
+        spoofedUseKeyCode = 0;
+        if (keyCode != 0 && !isUseKeyPhysicallyDown(keyCode)) {
+            KeyBinding.setKeyBindState(keyCode, false);
+        }
+    }
+
+    private boolean isUseKeyPhysicallyDown(int keyCode) {
+        if (keyCode < 0) {
+            int button = keyCode + 100;
+            return button >= 0 && Mouse.isButtonDown(button);
+        }
+        return keyCode > 0 && Keyboard.isKeyDown(keyCode);
     }
 
     private void sendBlockPacket(ItemStack stack) {
