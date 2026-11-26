@@ -1,13 +1,20 @@
 package com.potassium.module;
 
+import com.potassium.settings.BooleanSetting;
 import com.potassium.settings.SliderSetting;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.entity.AbstractClientPlayer;
 import net.minecraft.client.entity.EntityPlayerSP;
 import net.minecraft.client.renderer.GlStateManager;
+import net.minecraft.client.renderer.OpenGlHelper;
+import net.minecraft.client.renderer.RenderHelper;
+import net.minecraft.client.renderer.block.model.ItemCameraTransforms;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.EntityLivingBase;
 import net.minecraft.entity.player.EntityPlayer;
+import net.minecraft.item.EnumAction;
+import net.minecraft.item.ItemStack;
+import net.minecraft.util.BlockPos;
 import net.minecraft.util.MathHelper;
 import net.minecraftforge.client.event.RenderHandEvent;
 import net.minecraftforge.common.MinecraftForge;
@@ -19,9 +26,10 @@ import org.lwjgl.util.glu.Project;
  * Changes the first-person hand without touching the rest of the camera.
  *
  * <p>Forge fires RenderHandEvent before vanilla sets up the hand projection. The event is
- * cancelled only when a setting is actually changed, and the hand is then drawn with the same
- * projection, hurt shake and view bobbing, plus this module's offsets and rotations. When every
- * setting is at its default, the event is left alone and vanilla renders the hand.</p>
+ * cancelled only when a visual setting differs from vanilla or a blockhit is being drawn, and
+ * the hand is then rendered with the same projection, hurt shake and view bobbing, plus this
+ * module's offsets and rotations. When nothing needs changing, the event is left alone and
+ * vanilla renders the hand.</p>
  */
 public class ViewModel extends Module {
 
@@ -33,6 +41,7 @@ public class ViewModel extends Module {
 
     private final SliderSetting animationSpeedSetting =
             new SliderSetting("Animation Speed", DEFAULT_ANIMATION_SPEED, 0.1, 3.0, 0.05);
+    private final BooleanSetting blockhittingSetting = new BooleanSetting("Blockhitting", true);
     private final SliderSetting xSetting = new SliderSetting("X Offset", 0.0, -1.0, 1.0, 0.01);
     private final SliderSetting ySetting = new SliderSetting("Y Offset", 0.0, -1.0, 1.0, 0.01);
     private final SliderSetting zSetting = new SliderSetting("Z Offset", 0.0, -1.0, 1.0, 0.01);
@@ -53,6 +62,7 @@ public class ViewModel extends Module {
     public ViewModel() {
         super("ViewModel", Category.RENDER);
         settings.add(animationSpeedSetting);
+        settings.add(blockhittingSetting);
         settings.add(xSetting);
         settings.add(ySetting);
         settings.add(zSetting);
@@ -64,12 +74,14 @@ public class ViewModel extends Module {
 
     @SubscribeEvent
     public void onRenderHand(RenderHandEvent event) {
-        if (!isEnabled() || !hasCustomization() || !canRenderHand()) return;
+        if (!isEnabled() || !canRenderHand()) return;
+        boolean blockhit = blockhittingActive();
+        if (!hasVisualCustomization() && !blockhit) return;
         event.setCanceled(true);
-        renderHand(event.partialTicks, event.renderPass);
+        renderHand(event.partialTicks, event.renderPass, blockhit);
     }
 
-    private boolean hasCustomization() {
+    private boolean hasVisualCustomization() {
         return Math.abs(animationSpeedSetting.getValue() - DEFAULT_ANIMATION_SPEED) > 1.0E-4D
                 || Math.abs(xSetting.getValue()) > 1.0E-4D
                 || Math.abs(ySetting.getValue()) > 1.0E-4D
@@ -94,7 +106,7 @@ public class ViewModel extends Module {
         return !mc.entityRenderer.isShaderActive();
     }
 
-    private void renderHand(float partialTicks, int renderPass) {
+    private void renderHand(float partialTicks, int renderPass, boolean blockhit) {
         GlStateManager.clear(GL11.GL_DEPTH_BUFFER_BIT);
 
         GlStateManager.matrixMode(GL11.GL_PROJECTION);
@@ -127,26 +139,12 @@ public class ViewModel extends Module {
             GlStateManager.translate(-HAND_PIVOT_X, -HAND_PIVOT_Y, -HAND_PIVOT_Z);
 
             EntityPlayerSP player = mc.thePlayer;
-            float oldSwing = player.swingProgress;
-            float oldPreviousSwing = player.prevSwingProgress;
+            mc.entityRenderer.enableLightmap();
             try {
-                if (usesAnimationSpeed()) {
-                    float phase = swingPhase(player);
-                    // ItemRenderer reads getSwingProgress from these fields, so the hand is
-                    // rendered at our phase without changing the player update for other views.
-                    player.swingProgress = phase;
-                    player.prevSwingProgress = phase;
-                }
-
-                mc.entityRenderer.enableLightmap();
-                try {
-                    mc.getItemRenderer().renderItemInFirstPerson(partialTicks);
-                } finally {
-                    mc.entityRenderer.disableLightmap();
-                }
+                if (blockhit) renderBlockhit(player, partialTicks);
+                else renderVanillaHand(player, partialTicks);
             } finally {
-                player.swingProgress = oldSwing;
-                player.prevSwingProgress = oldPreviousSwing;
+                mc.entityRenderer.disableLightmap();
             }
         } finally {
             GlStateManager.popMatrix();
@@ -157,6 +155,112 @@ public class ViewModel extends Module {
             hurtCamera(partialTicks);
         }
         if (mc.gameSettings.viewBobbing) viewBobbing(partialTicks);
+    }
+
+    private void renderVanillaHand(EntityPlayerSP player, float partialTicks) {
+        float oldSwing = player.swingProgress;
+        float oldPreviousSwing = player.prevSwingProgress;
+        try {
+            if (usesAnimationSpeed()) {
+                float phase = swingPhase(player);
+                // ItemRenderer reads getSwingProgress from these fields, so the hand is
+                // rendered at our phase without changing the player update for other views.
+                player.swingProgress = phase;
+                player.prevSwingProgress = phase;
+            }
+            mc.getItemRenderer().renderItemInFirstPerson(partialTicks);
+        } finally {
+            player.swingProgress = oldSwing;
+            player.prevSwingProgress = oldPreviousSwing;
+        }
+    }
+
+    /**
+     * 1.7-style blockhit. Vanilla's BLOCK branch passes 0.0F into transformFirstPersonItem,
+     * which freezes the sword in the block pose even while the arm is swinging. Passing the live
+     * swing progress instead, with doBlockTransformations still after it, keeps the sword in the
+     * block position but lets it swing through that pose.
+     *
+     * <p>The rest of this method mirrors the camera, light map and equipping work vanilla does
+     * in renderItemInFirstPerson before it reaches the BLOCK branch.</p>
+     */
+    private void renderBlockhit(EntityPlayerSP player, float partialTicks) {
+        ItemStack stack = player.getHeldItem();
+        if (stack == null) return;
+
+        float pitch = player.prevRotationPitch
+                + (player.rotationPitch - player.prevRotationPitch) * partialTicks;
+        float yaw = player.prevRotationYaw
+                + (player.rotationYaw - player.prevRotationYaw) * partialTicks;
+
+        GlStateManager.pushMatrix();
+        GlStateManager.rotate(pitch, 1.0F, 0.0F, 0.0F);
+        GlStateManager.rotate(yaw, 0.0F, 1.0F, 0.0F);
+        RenderHelper.enableStandardItemLighting();
+        GlStateManager.popMatrix();
+
+        int light = mc.theWorld.getCombinedLight(new BlockPos(player.posX,
+                player.posY + (double) player.getEyeHeight(), player.posZ), 0);
+        OpenGlHelper.setLightmapTextureCoords(OpenGlHelper.lightmapTexUnit,
+                (float) (light & 65535), (float) (light >> 16));
+
+        float armPitch = player.prevRenderArmPitch
+                + (player.renderArmPitch - player.prevRenderArmPitch) * partialTicks;
+        float armYaw = player.prevRenderArmYaw
+                + (player.renderArmYaw - player.prevRenderArmYaw) * partialTicks;
+        GlStateManager.rotate((player.rotationPitch - armPitch) * 0.1F, 1.0F, 0.0F, 0.0F);
+        GlStateManager.rotate((player.rotationYaw - armYaw) * 0.1F, 0.0F, 1.0F, 0.0F);
+
+        GlStateManager.enableRescaleNormal();
+        GlStateManager.pushMatrix();
+        try {
+            // The sword is already raised, so the equip offset is zero. The live swing is the
+            // value vanilla drops to 0.0F in its BLOCK case.
+            transformFirstPersonItem(0.0F, renderSwing(player, partialTicks));
+            doBlockTransformations();
+            mc.getItemRenderer().renderItem(player, stack,
+                    ItemCameraTransforms.TransformType.FIRST_PERSON);
+        } finally {
+            GlStateManager.popMatrix();
+            GlStateManager.disableRescaleNormal();
+            RenderHelper.disableStandardItemLighting();
+        }
+    }
+
+    private float renderSwing(EntityPlayerSP player, float partialTicks) {
+        return usesAnimationSpeed() ? swingPhase(player) : player.getSwingProgress(partialTicks);
+    }
+
+    private boolean blockhittingActive() {
+        if (!blockhittingSetting.getValue() || mc.thePlayer == null) return false;
+        EntityPlayerSP player = mc.thePlayer;
+        if (!player.isUsingItem()) return false;
+        ItemStack held = player.getHeldItem();
+        if (held == null || held.getItemUseAction() != EnumAction.BLOCK) return false;
+        if (player.isSwingInProgress) return true;
+        // A slow swing can outlive vanilla's own swing state, so keep drawing it in block pose.
+        return usesAnimationSpeed() && swingStartNanos != 0L;
+    }
+
+    /** The transforms vanilla ItemRenderer applies before the held item, copied here. */
+    private void transformFirstPersonItem(float equipProgress, float swingProgress) {
+        GlStateManager.translate(0.56F, -0.52F, -0.72F);
+        GlStateManager.translate(0.0F, equipProgress * -0.6F, 0.0F);
+        GlStateManager.rotate(45.0F, 0.0F, 1.0F, 0.0F);
+        float swing = MathHelper.sin(swingProgress * swingProgress * (float) Math.PI);
+        float swingRoot = MathHelper.sin(MathHelper.sqrt_float(swingProgress) * (float) Math.PI);
+        GlStateManager.rotate(swing * -20.0F, 0.0F, 1.0F, 0.0F);
+        GlStateManager.rotate(swingRoot * -20.0F, 0.0F, 0.0F, 1.0F);
+        GlStateManager.rotate(swingRoot * -80.0F, 1.0F, 0.0F, 0.0F);
+        GlStateManager.scale(0.4F, 0.4F, 0.4F);
+    }
+
+    /** The block pose vanilla applies after transformFirstPersonItem. */
+    private void doBlockTransformations() {
+        GlStateManager.translate(-0.5F, 0.2F, 0.0F);
+        GlStateManager.rotate(30.0F, 0.0F, 1.0F, 0.0F);
+        GlStateManager.rotate(-80.0F, 1.0F, 0.0F, 0.0F);
+        GlStateManager.rotate(60.0F, 0.0F, 1.0F, 0.0F);
     }
 
     private float handFov() {
