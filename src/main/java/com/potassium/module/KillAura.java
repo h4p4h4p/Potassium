@@ -4,6 +4,7 @@ import com.potassium.command.CommandManager;
 import com.potassium.settings.BooleanSetting;
 import com.potassium.settings.ModeSetting;
 import com.potassium.settings.RangeSetting;
+import com.potassium.settings.Setting;
 import com.potassium.settings.SliderSetting;
 import com.potassium.util.ClickState;
 import com.potassium.util.RotationSmoother;
@@ -783,6 +784,15 @@ public class KillAura extends Module {
             this.entity = entity;
             this.score = score;
         }
+    }
+
+    /** The mode and mouse-down options only matter once blocking is enabled. */
+    @Override
+    public boolean isSettingVisible(Setting setting) {
+        if (setting == blockingModeSetting || setting == onMouseDownSetting) {
+            return blockingEnabledSetting.getValue();
+        }
+        return true;
     }
 
     /** How many targets the aura currently has in its cycle. */
