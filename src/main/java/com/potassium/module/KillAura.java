@@ -90,11 +90,19 @@ public class KillAura extends Module {
     private final SliderSetting fovSetting = new SliderSetting("FOV", 180, 1, 360, 1);
     private final RangeSetting cpsSetting = new RangeSetting("CPS", 12, 12, 1, 20, 1);
     private final ModeSetting smoothingSetting = new ModeSetting("Smoothing",
-            new String[]{RotationUtil.SMOOTHING_LINEAR, RotationUtil.SMOOTHING_EXPONENTIAL}, 0);
+            new String[]{RotationUtil.SMOOTHING_LINEAR, RotationUtil.SMOOTHING_EXPONENTIAL,
+                    RotationUtil.SMOOTHING_LEGIT}, 0);
     private final RangeSetting horizontalSpeedSetting =
             new RangeSetting("Horizontal Speed", 180, 180, 0, 180, 1);
     private final RangeSetting verticalSpeedSetting =
             new RangeSetting("Vertical Speed", 180, 180, 0, 180, 1);
+    /** OpenAdjust's Organic parameters, used when Smoothing is Legit. */
+    private final SliderSetting organicSpeedSetting =
+            new SliderSetting("Max Angle", 60, 10, 180, 1);
+    private final SliderSetting driftSetting =
+            new SliderSetting("Drift Intensity", 1.2, 0.5, 2.0, 0.1);
+    private final SliderSetting jitterSetting =
+            new SliderSetting("Jitter Intensity", 0.12, 0.0, 0.3, 0.01);
     private final BooleanSetting playersSetting = new BooleanSetting("Players", true);
     private final BooleanSetting passiveSetting = new BooleanSetting("Passive", false);
     private final BooleanSetting hostileSetting = new BooleanSetting("Hostile", false);
@@ -146,6 +154,9 @@ public class KillAura extends Module {
         smoothingSetting.setGroup(ROTATION_SMOOTHING_GROUP);
         horizontalSpeedSetting.setGroup(ROTATION_SMOOTHING_GROUP);
         verticalSpeedSetting.setGroup(ROTATION_SMOOTHING_GROUP);
+        organicSpeedSetting.setGroup(ROTATION_SMOOTHING_GROUP);
+        driftSetting.setGroup(ROTATION_SMOOTHING_GROUP);
+        jitterSetting.setGroup(ROTATION_SMOOTHING_GROUP);
         rangeSetting.setGroup(RANGE_GROUP);
         reachSetting.setGroup(RANGE_GROUP);
         fovSetting.setGroup(RANGE_GROUP);
@@ -176,6 +187,9 @@ public class KillAura extends Module {
         settings.add(smoothingSetting);
         settings.add(horizontalSpeedSetting);
         settings.add(verticalSpeedSetting);
+        settings.add(organicSpeedSetting);
+        settings.add(driftSetting);
+        settings.add(jitterSetting);
         settings.add(wallCheckSetting);
         settings.add(weaponOnlySetting);
         settings.add(stopOnBlockSetting);
@@ -726,6 +740,10 @@ public class KillAura extends Module {
                     sentInitialised ? sentPitch : mc.thePlayer.rotationPitch);
             aimInitialised = true;
         }
+        if (isLegitSmoothing()) {
+            aim.setOrganic(organicSpeedSetting.getValue(), driftSetting.getValue(),
+                    jitterSetting.getValue());
+        }
         // One tick's turn, and the value this tick's packet samples below. A silent aim that is
         // still catching up when the packet is built is a look one tick behind the target.
         aim.tick(rotations[0], rotations[1], yawStep, pitchStep, smoothing);
@@ -911,6 +929,10 @@ public class KillAura extends Module {
         return ROTATION_SILENT.equals(rotationMode());
     }
 
+    private boolean isLegitSmoothing() {
+        return RotationUtil.SMOOTHING_LEGIT.equals(smoothingSetting.getValue());
+    }
+
     /**
      * LiquidBounce's three movement corrections, with Silent as its default. None leaves the
      * walk on the camera under an aim the server believes; Silent keeps the camera direction
@@ -1070,9 +1092,16 @@ public class KillAura extends Module {
             return blockingEnabledSetting.getValue();
         }
         // Lock View uses OpenAdjust's instant camera lock; these only affect Silent.
-        if (setting == smoothingSetting || setting == horizontalSpeedSetting
-                || setting == verticalSpeedSetting || setting == movementFixSetting) {
+        if (setting == smoothingSetting || setting == movementFixSetting) {
             return isSilentRotations();
+        }
+        // Legit (OpenAdjust's Organic) sets its own turn speed and hand motion.
+        if (setting == horizontalSpeedSetting || setting == verticalSpeedSetting) {
+            return isSilentRotations() && !isLegitSmoothing();
+        }
+        if (setting == organicSpeedSetting || setting == driftSetting
+                || setting == jitterSetting) {
+            return isSilentRotations() && isLegitSmoothing();
         }
         return true;
     }

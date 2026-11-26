@@ -40,6 +40,8 @@ public class RotationUtil {
 
     public static final String SMOOTHING_LINEAR = "Linear";
     public static final String SMOOTHING_EXPONENTIAL = "Exponential";
+    /** OpenAdjust's Organic model, shown under the name Legit. */
+    public static final String SMOOTHING_LEGIT = "Legit";
 
     /**
      * Degrees a speed setting allows in one tick, the unit the game itself moves in. 180 is a

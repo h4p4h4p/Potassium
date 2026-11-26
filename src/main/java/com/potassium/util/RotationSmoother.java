@@ -28,6 +28,12 @@ public final class RotationSmoother {
 
     private final Random random = new Random();
 
+    /** OpenAdjust's Organic model, rebuilt whenever the Legit settings change. */
+    private OrganicRotation organic;
+    private double organicSpeed;
+    private double organicDrift;
+    private double organicJitter;
+
     private float yaw;
     private float pitch;
     private boolean started;
@@ -45,6 +51,21 @@ public final class RotationSmoother {
     private int pitchTremorWait = 5;
     private int tremorYaw;
     private int tremorPitch;
+
+    /**
+     * Supplies the Legit settings. The model keeps its own drift phase while they are unchanged,
+     * so moving a slider is the only thing that starts a new hand motion.
+     */
+    public void setOrganic(double speed, double drift, double jitter) {
+        if (organic != null && organicSpeed == speed && organicDrift == drift
+                && organicJitter == jitter) {
+            return;
+        }
+        organicSpeed = speed;
+        organicDrift = drift;
+        organicJitter = jitter;
+        organic = new OrganicRotation(speed, drift, jitter);
+    }
 
     /** Starts at a rotation without turning toward it. */
     public void reset(float yaw, float pitch) {
@@ -78,6 +99,16 @@ public final class RotationSmoother {
         double step = RotationUtil.mouseStep();
         targetYaw = MathHelper.wrapAngleTo180_float(targetYaw);
         targetPitch = MathHelper.clamp_float(targetPitch, -90.0F, 90.0F);
+
+        // Legit is OpenAdjust's Organic model: its own speed limit, sine drift and random
+        // jitter, so the ramp and settled tremor below are not used on top of it.
+        if (RotationUtil.SMOOTHING_LEGIT.equals(smoothing)) {
+            if (organic == null) setOrganic(60.0D, 1.2D, 0.12D);
+            float[] next = organic.apply(yaw, pitch, targetYaw, targetPitch, 1.0F);
+            yaw = MathHelper.wrapAngleTo180_float(next[0]);
+            pitch = MathHelper.clamp_float(next[1], -90.0F, 90.0F);
+            return;
+        }
 
         // A real mouse is never perfectly still. Each axis that has reached its point moves one
         // count every few ticks and comes back, so an aim that is tracking a target on one axis
