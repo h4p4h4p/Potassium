@@ -67,6 +67,8 @@ public class TargetHud extends Module {
     private int lastSeenTick;
     private int combo;
     private int lastHitTick;
+    /** Health + absorption from the previous tick, so incoming damage breaks the combo. */
+    private float lastHealth = -1.0F;
 
     public TargetHud() {
         super("TargetHUD", Category.RENDER);
@@ -113,8 +115,18 @@ public class TargetHud extends Module {
         if (mc.thePlayer == null || mc.theWorld == null) {
             lastTarget = null;
             combo = 0;
+            lastHealth = -1.0F;
             return;
         }
+
+        // Taking a hit ends the combo even if the target has not changed. Absorption is
+        // included so a hit soaked by it still resets the counter.
+        float health = mc.thePlayer.getHealth() + mc.thePlayer.getAbsorptionAmount();
+        if (lastHealth >= 0.0F && health < lastHealth - 1.0E-4F) {
+            combo = 0;
+        }
+        lastHealth = health;
+
         EntityLivingBase target = findTarget();
         if (target != null) {
             if (target != lastTarget) combo = 0;
@@ -338,11 +350,13 @@ public class TargetHud extends Module {
 
     @Override
     public void onEnable() {
+        lastHealth = -1.0F;
     }
 
     @Override
     public void onDisable() {
         lastTarget = null;
         combo = 0;
+        lastHealth = -1.0F;
     }
 }
