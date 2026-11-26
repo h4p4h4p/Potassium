@@ -21,7 +21,7 @@ import java.util.Map;
 public class ConfigManager {
 
     private static final String CONFIG_VERSION_KEY = "potassium.configVersion";
-    private static final String CONFIG_VERSION = "10";
+    private static final String CONFIG_VERSION = "11";
 
     private final File file;
 
@@ -293,6 +293,12 @@ public class ConfigManager {
             int oldBlockingIndex = Integer.parseInt(oldKillAuraBlocking);
             values.put("KillAura.Blocking", Boolean.toString(oldBlockingIndex != 0));
             values.put("KillAura.Block Mode", Integer.toString(Math.max(0, oldBlockingIndex - 1)));
+        }
+
+        // Packet Visible was removed. Keep configs that selected it on a visible mode
+        // instead of letting the old index clamp to Fake.
+        if (configVersion < 11 && "3".equals(values.get("KillAura.Block Mode"))) {
+            values.put("KillAura.Block Mode", "1");
         }
 
         // KillAura's Movement Fix was a boolean; Strict (1) is the old true state.

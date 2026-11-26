@@ -59,7 +59,6 @@ public class KillAura extends Module {
     public static final String MOVE_FIX_STRICT = "Strict";
 
     public static final String BLOCK_PACKET = "Packet";
-    public static final String BLOCK_PACKET_VISIBLE = "Packet Visible";
     public static final String BLOCK_VANILLA = "Vanilla";
     public static final String BLOCK_FAKE = "Fake";
 
@@ -89,7 +88,7 @@ public class KillAura extends Module {
     private final BooleanSetting weaponOnlySetting = new BooleanSetting("Weapon Only", false);
     private final BooleanSetting blockingEnabledSetting = new BooleanSetting("Blocking", false);
     private final ModeSetting blockingModeSetting = new ModeSetting("Block Mode",
-            new String[]{BLOCK_PACKET, BLOCK_VANILLA, BLOCK_FAKE, BLOCK_PACKET_VISIBLE}, 0);
+            new String[]{BLOCK_PACKET, BLOCK_VANILLA, BLOCK_FAKE}, 0);
     private final SliderSetting blockRangeSetting = new SliderSetting("Block Range", 6.0, 0.0, 8.0, 0.1);
     private final BooleanSetting onMouseDownSetting = new BooleanSetting("On Mouse Down", true);
     private final BooleanSetting stopOnBlockSetting = new BooleanSetting("Stop on Block", false);
@@ -208,7 +207,7 @@ public class KillAura extends Module {
         target = targets.get(targetIndex);
         syncAutoBlockMode();
 
-        // Packet modes block before the hit as well as after it: sending C08 first means the
+        // Packet mode blocks before the hit as well as after it: sending C08 first means the
         // server is already blocking when the attack lands, not one packet later.
         if (isPacketMode(blockingMode())) maintainAutoBlock();
 
@@ -274,11 +273,10 @@ public class KillAura extends Module {
      * Auto-blocking between attacks, after LiquidBounce and Rise.
      *
      * <p>Packet sends only C08/C07, so the server holds the block while the client keeps
-     * attacking normally; nothing slows the camera or movement. Packet Visible sends the same
-     * packets but also puts the sword in use client-side, so the block animation is visible
-     * without giving up the persistent server block. Vanilla also puts the sword in use and
-     * releases it before each hit. Fake shows that animation without telling the server, so
-     * it is only cosmetic. All of them only run while a sword is held.</p>
+     * attacking normally; nothing slows the camera or movement. Vanilla puts the sword in use,
+     * releases it before each hit and starts it again on the next tick. Fake shows that
+     * animation without telling the server, so it is only cosmetic. All of them only run while
+     * a sword is held.</p>
      *
      * <p>With On Mouse Down on, this only assists a block the player is already holding;
      * with it off, it blocks whenever the aura has a target. The visible modes also hold the
@@ -355,7 +353,7 @@ public class KillAura extends Module {
     }
 
     private boolean isPacketMode(String mode) {
-        return BLOCK_PACKET.equals(mode) || BLOCK_PACKET_VISIBLE.equals(mode);
+        return BLOCK_PACKET.equals(mode);
     }
 
     private void syncAutoBlockMode() {
@@ -369,9 +367,8 @@ public class KillAura extends Module {
         String mode = blockingMode();
         if (held == null || !(held.getItem() instanceof ItemSword) || !blockingEnabled()) return;
 
-        // The client-side use state gives Vanilla and Packet Visible their animation and
-        // slowdown; Fake wants the animation alone. Packet leaves the client untouched and
-        // only tells the server.
+        // The client-side use state gives Vanilla its animation and slowdown; Fake wants the
+        // animation alone. Packet leaves the client untouched and only tells the server.
         if (!BLOCK_PACKET.equals(mode)) {
             mc.thePlayer.setItemInUse(held, held.getMaxItemUseDuration());
             holdUseKey();
