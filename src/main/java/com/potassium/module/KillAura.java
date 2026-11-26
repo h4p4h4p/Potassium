@@ -55,6 +55,7 @@ public class KillAura extends Module {
     public static final String MOVE_FIX_STRICT = "Strict";
 
     public static final String BLOCK_PACKET = "Packet";
+    public static final String BLOCK_PACKET_VISIBLE = "Packet Visible";
     public static final String BLOCK_VANILLA = "Vanilla";
     public static final String BLOCK_FAKE = "Fake";
 
@@ -84,7 +85,8 @@ public class KillAura extends Module {
     private final BooleanSetting weaponOnlySetting = new BooleanSetting("Weapon Only", false);
     private final BooleanSetting blockingEnabledSetting = new BooleanSetting("Blocking", false);
     private final ModeSetting blockingModeSetting = new ModeSetting("Block Mode",
-            new String[]{BLOCK_PACKET, BLOCK_VANILLA, BLOCK_FAKE}, 0);
+            new String[]{BLOCK_PACKET, BLOCK_VANILLA, BLOCK_FAKE, BLOCK_PACKET_VISIBLE}, 0);
+    private final SliderSetting blockRangeSetting = new SliderSetting("Block Range", 6.0, 0.0, 8.0, 0.1);
     private final BooleanSetting onMouseDownSetting = new BooleanSetting("On Mouse Down", true);
     private final BooleanSetting stopOnBlockSetting = new BooleanSetting("Stop on Block", false);
     private final ModeSetting movementFixSetting = new ModeSetting("Movement Fix",
@@ -127,6 +129,7 @@ public class KillAura extends Module {
         stopOnBlockSetting.setGroup(CONDITIONS_GROUP);
         blockingEnabledSetting.setGroup(BLOCKING_GROUP);
         blockingModeSetting.setGroup(BLOCKING_GROUP);
+        blockRangeSetting.setGroup(BLOCKING_GROUP);
         onMouseDownSetting.setGroup(BLOCKING_GROUP);
         settings.add(rotationSetting);
         settings.add(alertDistanceSetting);
@@ -136,6 +139,7 @@ public class KillAura extends Module {
         settings.add(fovSetting);
         settings.add(blockingEnabledSetting);
         settings.add(blockingModeSetting);
+        settings.add(blockRangeSetting);
         settings.add(onMouseDownSetting);
         settings.add(cpsSetting);
         settings.add(smoothingSetting);
@@ -177,7 +181,10 @@ public class KillAura extends Module {
             target = null;
             targetIndex = 0;
             clickBudget = 1.0D;
-            stopAutoBlock();
+            // Block Range can cover a threat before it reaches attack Range. Keep the block
+            // up even with no attack target, so a player entering the aura is already guarded.
+            if (blockingEnabled() && blockThreat() != null) maintainAutoBlock();
+            else stopAutoBlock();
             // The server's rotation goes back to the camera on its own curve; the next target
             // then picks up from wherever the view really is.
             beginReturn();
@@ -190,9 +197,9 @@ public class KillAura extends Module {
         target = targets.get(targetIndex);
         syncAutoBlockMode();
 
-        // Packet mode blocks before the hit as well as after it: sending C08 first means the
+        // Packet modes block before the hit as well as after it: sending C08 first means the
         // server is already blocking when the attack lands, not one packet later.
-        if (BLOCK_PACKET.equals(blockingMode())) maintainAutoBlock();
+        if (isPacketMode(blockingMode())) maintainAutoBlock();
 
         // Attacking here puts the attack packet before this tick's movement packet, which is
         // the order a real click produces. Sent at the end of the tick instead, every hit
@@ -201,9 +208,9 @@ public class KillAura extends Module {
         boolean attackNow = !stopOnBlock() && !usingOtherItem() && canAttack(current)
                 && clickDue();
         if (attackNow) {
-            // Packet mode deliberately keeps the server-side block through the hit; every
+            // Packet modes deliberately keep the server-side block through the hit; every
             // other mode releases it so the client attack matches the packet it sends.
-            if (autoBlockActive && !BLOCK_PACKET.equals(autoBlockMode)) stopAutoBlock();
+            if (autoBlockActive && !isPacketMode(autoBlockMode)) stopAutoBlock();
             if (attack(current)) advanceTarget();
         }
         maintainAutoBlock();
@@ -251,10 +258,11 @@ public class KillAura extends Module {
      * Auto-blocking between attacks, after LiquidBounce and Rise.
      *
      * <p>Packet sends only C08/C07, so the server holds the block while the client keeps
-     * attacking normally; nothing slows the camera or movement. Vanilla also puts the sword
-     * in use client-side, giving the real block animation and slowdown, and releases it
-     * before each hit. Fake shows that animation without telling the server, so it is only
-     * cosmetic. All of them only run while a sword is held.</p>
+     * attacking normally; nothing slows the camera or movement. Packet Visible sends the same
+     * packets but also puts the sword in use client-side, so the block animation is visible
+     * without giving up the persistent server block. Vanilla also puts the sword in use and
+     * releases it before each hit. Fake shows that animation without telling the server, so
+     * it is only cosmetic. All of them only run while a sword is held.</p>
      *
      * <p>With On Mouse Down on, this only assists a block the player is already holding;
      * with it off, it blocks whenever the aura has a target.</p>
@@ -274,14 +282,49 @@ public class KillAura extends Module {
     }
 
     private boolean autoBlockWanted() {
-        if (mc.thePlayer == null || target == null) return false;
+        if (mc.thePlayer == null || mc.theWorld == null) return false;
         // On Mouse Down follows the interact key; without it the aura keeps blocking on its
-        // own whenever a target is in range.
+        // own whenever a threat is in Block Range.
         if (onMouseDownSetting.getValue() && !mc.gameSettings.keyBindUseItem.isKeyDown()) return false;
         ItemStack held = mc.thePlayer.getHeldItem();
         if (held == null || !(held.getItem() instanceof ItemSword)) return false;
         // Do not block over food, a potion or a bow the player is using.
-        return !usingOtherItem();
+        if (usingOtherItem()) return false;
+        // Block Range is independent of attack Range: a threat can be close enough to guard
+        // against before the aura is allowed to hit it.
+        return blockThreat() != null;
+    }
+
+    /**
+     * The nearest entity inside Block Range. The attack target is preferred when it is close
+     * enough; otherwise a wider scan lets blocking start before the target enters Range.
+     */
+    private EntityLivingBase blockThreat() {
+        if (mc.thePlayer == null || mc.theWorld == null) return null;
+        double range = blockRangeSetting.getValue();
+        if (range <= 0.0D) return null;
+        if (target != null && target.isEntityAlive() && hitDistance(target) <= range) return target;
+
+        EntityLivingBase nearest = null;
+        double nearestDistance = range;
+        for (Entity entity : mc.theWorld.loadedEntityList) {
+            if (entity == mc.thePlayer || entity.isDead || !(entity instanceof EntityLivingBase)) continue;
+            EntityLivingBase living = (EntityLivingBase) entity;
+            if (!living.isEntityAlive()) continue;
+            if (playersOnlySetting.getValue() && !(living instanceof EntityPlayer)) continue;
+            if (living instanceof EntityPlayer && ((EntityPlayer) living).isSpectator()) continue;
+            if (AntiBot.isBot(living)) continue;
+
+            double distance = hitDistance(living);
+            if (distance > nearestDistance) continue;
+            nearestDistance = distance;
+            nearest = living;
+        }
+        return nearest;
+    }
+
+    private boolean isPacketMode(String mode) {
+        return BLOCK_PACKET.equals(mode) || BLOCK_PACKET_VISIBLE.equals(mode);
     }
 
     private void syncAutoBlockMode() {
@@ -295,8 +338,9 @@ public class KillAura extends Module {
         String mode = blockingMode();
         if (held == null || !(held.getItem() instanceof ItemSword) || !blockingEnabled()) return;
 
-        // The client-side use state gives Vanilla its animation and slowdown; Fake wants the
-        // animation alone. Packet leaves the client untouched and only tells the server.
+        // The client-side use state gives Vanilla and Packet Visible their animation and
+        // slowdown; Fake wants the animation alone. Packet leaves the client untouched and
+        // only tells the server.
         if (!BLOCK_PACKET.equals(mode)) {
             mc.thePlayer.setItemInUse(held, held.getMaxItemUseDuration());
         }
@@ -786,10 +830,11 @@ public class KillAura extends Module {
         }
     }
 
-    /** The mode and mouse-down options only matter once blocking is enabled. */
+    /** The blocking sub-settings only matter once blocking is enabled. */
     @Override
     public boolean isSettingVisible(Setting setting) {
-        if (setting == blockingModeSetting || setting == onMouseDownSetting) {
+        if (setting == blockingModeSetting || setting == blockRangeSetting
+                || setting == onMouseDownSetting) {
             return blockingEnabledSetting.getValue();
         }
         return true;

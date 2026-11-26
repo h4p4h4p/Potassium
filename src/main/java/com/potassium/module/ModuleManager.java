@@ -35,6 +35,7 @@ public class ModuleManager {
         modules.add(new NoFOV());
         modules.add(new FreeLook());
         modules.add(new Freecam());
+        modules.add(new ViewModel());
         modules.add(new Rotations());
         modules.add(new HUD());
         modules.add(new ClientSpoofer());
