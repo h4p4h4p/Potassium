@@ -28,19 +28,18 @@ import org.lwjgl.util.glu.Project;
  * <p>Forge fires RenderHandEvent before vanilla sets up the hand projection. The event is
  * cancelled only when a visual setting differs from vanilla or a blockhit is being drawn, and
  * the hand is then rendered with the same projection, hurt shake and view bobbing, plus this
- * module's offsets and rotations. When nothing needs changing, the event is left alone and
- * vanilla renders the hand.</p>
+ * module's size, offsets and rotations. When nothing needs changing, the event is left alone
+ * and vanilla renders the hand.</p>
  */
 public class ViewModel extends Module {
 
-    private static final double DEFAULT_ANIMATION_SPEED = 1.0D;
     /** Vanilla's first-person hand pivot, used so rotation turns the viewmodel in place. */
     private static final float HAND_PIVOT_X = 0.56F;
     private static final float HAND_PIVOT_Y = -0.52F;
     private static final float HAND_PIVOT_Z = -0.72F;
 
-    private final SliderSetting animationSpeedSetting =
-            new SliderSetting("Animation Speed", DEFAULT_ANIMATION_SPEED, 0.1, 3.0, 0.05);
+    private final SliderSetting sizeSetting =
+            new SliderSetting("Size", 1.0, 0.5, 2.0, 0.05);
     private final BooleanSetting blockhittingSetting = new BooleanSetting("Blockhitting", true);
     private final SliderSetting xSetting = new SliderSetting("X Offset", 0.0, -1.0, 1.0, 0.01);
     private final SliderSetting ySetting = new SliderSetting("Y Offset", 0.0, -1.0, 1.0, 0.01);
@@ -54,14 +53,9 @@ public class ViewModel extends Module {
 
     private final Minecraft mc = Minecraft.getMinecraft();
 
-    /** When the current swing began, so animation speed can drive the hand from real time. */
-    private long swingStartNanos;
-    private boolean swinging;
-    private float swingPhase;
-
     public ViewModel() {
         super("ViewModel", Category.RENDER);
-        settings.add(animationSpeedSetting);
+        settings.add(sizeSetting);
         settings.add(blockhittingSetting);
         settings.add(xSetting);
         settings.add(ySetting);
@@ -82,7 +76,7 @@ public class ViewModel extends Module {
     }
 
     private boolean hasVisualCustomization() {
-        return Math.abs(animationSpeedSetting.getValue() - DEFAULT_ANIMATION_SPEED) > 1.0E-4D
+        return Math.abs(sizeSetting.getValue() - 1.0D) > 1.0E-4D
                 || Math.abs(xSetting.getValue()) > 1.0E-4D
                 || Math.abs(ySetting.getValue()) > 1.0E-4D
                 || Math.abs(zSetting.getValue()) > 1.0E-4D
@@ -136,13 +130,15 @@ public class ViewModel extends Module {
             GlStateManager.rotate((float) rotationYSetting.getValue(), 0.0F, 1.0F, 0.0F);
             GlStateManager.rotate((float) rotationXSetting.getValue(), 1.0F, 0.0F, 0.0F);
             GlStateManager.rotate((float) rotationZSetting.getValue(), 0.0F, 0.0F, 1.0F);
+            float size = (float) sizeSetting.getValue();
+            GlStateManager.scale(size, size, size);
             GlStateManager.translate(-HAND_PIVOT_X, -HAND_PIVOT_Y, -HAND_PIVOT_Z);
 
             EntityPlayerSP player = mc.thePlayer;
             mc.entityRenderer.enableLightmap();
             try {
                 if (blockhit) renderBlockhit(player, partialTicks);
-                else renderVanillaHand(player, partialTicks);
+                else renderVanillaHand(partialTicks);
             } finally {
                 mc.entityRenderer.disableLightmap();
             }
@@ -157,22 +153,8 @@ public class ViewModel extends Module {
         if (mc.gameSettings.viewBobbing) viewBobbing(partialTicks);
     }
 
-    private void renderVanillaHand(EntityPlayerSP player, float partialTicks) {
-        float oldSwing = player.swingProgress;
-        float oldPreviousSwing = player.prevSwingProgress;
-        try {
-            if (usesAnimationSpeed()) {
-                float phase = swingPhase(player);
-                // ItemRenderer reads getSwingProgress from these fields, so the hand is
-                // rendered at our phase without changing the player update for other views.
-                player.swingProgress = phase;
-                player.prevSwingProgress = phase;
-            }
-            mc.getItemRenderer().renderItemInFirstPerson(partialTicks);
-        } finally {
-            player.swingProgress = oldSwing;
-            player.prevSwingProgress = oldPreviousSwing;
-        }
+    private void renderVanillaHand(float partialTicks) {
+        mc.getItemRenderer().renderItemInFirstPerson(partialTicks);
     }
 
     /**
@@ -216,7 +198,7 @@ public class ViewModel extends Module {
         try {
             // The sword is already raised, so the equip offset is zero. The live swing is the
             // value vanilla drops to 0.0F in its BLOCK case.
-            transformFirstPersonItem(0.0F, renderSwing(player, partialTicks));
+            transformFirstPersonItem(0.0F, player.getSwingProgress(partialTicks));
             doBlockTransformations();
             mc.getItemRenderer().renderItem(player, stack,
                     ItemCameraTransforms.TransformType.FIRST_PERSON);
@@ -227,19 +209,13 @@ public class ViewModel extends Module {
         }
     }
 
-    private float renderSwing(EntityPlayerSP player, float partialTicks) {
-        return usesAnimationSpeed() ? swingPhase(player) : player.getSwingProgress(partialTicks);
-    }
-
     private boolean blockhittingActive() {
         if (!blockhittingSetting.getValue() || mc.thePlayer == null) return false;
         EntityPlayerSP player = mc.thePlayer;
         if (!player.isUsingItem()) return false;
         ItemStack held = player.getHeldItem();
         if (held == null || held.getItemUseAction() != EnumAction.BLOCK) return false;
-        if (player.isSwingInProgress) return true;
-        // A slow swing can outlive vanilla's own swing state, so keep drawing it in block pose.
-        return usesAnimationSpeed() && swingStartNanos != 0L;
+        return player.isSwingInProgress;
     }
 
     /** The transforms vanilla ItemRenderer applies before the held item, copied here. */
@@ -272,41 +248,6 @@ public class ViewModel extends Module {
         return fov;
     }
 
-    private boolean usesAnimationSpeed() {
-        return Math.abs(animationSpeedSetting.getValue() - DEFAULT_ANIMATION_SPEED) > 1.0E-4D;
-    }
-
-    /**
-     * A swing phase driven by wall time rather than the 20 Hz update, so speeds above and
-     * below vanilla stay smooth. A slow swing keeps drawing after vanilla's own swing state
-     * ends; the next swing simply restarts the timer.
-     */
-    private float swingPhase(EntityPlayerSP player) {
-        long now = System.nanoTime();
-        boolean inSwing = player.isSwingInProgress;
-
-        if (inSwing && !swinging) {
-            swinging = true;
-            swingStartNanos = now;
-            swingPhase = 0.0F;
-        } else if (!inSwing) {
-            swinging = false;
-        }
-
-        if (swingStartNanos == 0L) return 0.0F;
-
-        double speed = Math.max(0.05D, animationSpeedSetting.getValue());
-        double duration = 6.0D / 20.0D / speed;
-        double elapsed = (now - swingStartNanos) / 1.0E9D;
-        swingPhase = (float) Math.min(1.0D, elapsed / duration);
-
-        if (swingPhase >= 1.0F && !inSwing) {
-            swingStartNanos = 0L;
-            swingPhase = 0.0F;
-        }
-        return swingPhase;
-    }
-
     private void hurtCamera(float partialTicks) {
         Entity view = mc.getRenderViewEntity();
         if (!(view instanceof EntityLivingBase)) return;
@@ -321,6 +262,14 @@ public class ViewModel extends Module {
         GlStateManager.rotate(-yaw, 0.0F, 1.0F, 0.0F);
         GlStateManager.rotate(-hurt * 14.0F, 0.0F, 0.0F, 1.0F);
         GlStateManager.rotate(yaw, 0.0F, 1.0F, 0.0F);
+    }
+
+    @Override
+    public void onEnable() {
+    }
+
+    @Override
+    public void onDisable() {
     }
 
     private void viewBobbing(float partialTicks) {
@@ -342,17 +291,4 @@ public class ViewModel extends Module {
         GlStateManager.rotate(pitch, 1.0F, 0.0F, 0.0F);
     }
 
-    @Override
-    public void onEnable() {
-        swingStartNanos = 0L;
-        swinging = false;
-        swingPhase = 0.0F;
-    }
-
-    @Override
-    public void onDisable() {
-        swingStartNanos = 0L;
-        swinging = false;
-        swingPhase = 0.0F;
-    }
 }
