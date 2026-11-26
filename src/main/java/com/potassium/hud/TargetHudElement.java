@@ -30,12 +30,14 @@ public class TargetHudElement extends HudElement {
 
     @Override
     public int getWidth() {
-        return (int) TargetHud.WIDTH;
+        TargetHud module = TargetHud.instance();
+        return module == null ? (int) TargetHud.WIDTH : (int) module.getScaledWidth();
     }
 
     @Override
     public int getHeight() {
-        return (int) TargetHud.HEIGHT;
+        TargetHud module = TargetHud.instance();
+        return module == null ? 46 : (int) module.getScaledHeight();
     }
 
     /** The module renders it; this element only carries the position and edit hitbox. */

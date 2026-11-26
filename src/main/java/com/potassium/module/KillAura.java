@@ -46,6 +46,7 @@ import org.lwjgl.input.Mouse;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Random;
 
 /**
  * Selects visible targets in range, turns toward them and attacks them with LeftClicker-style
@@ -75,6 +76,8 @@ public class KillAura extends Module {
     public static final String BLOCK_VANILLA = "Vanilla";
     public static final String BLOCK_FAKE = "Fake";
     public static final String BLOCK_BLINK = "Blink";
+    public static final String BLINK_TIMING_FIXED = "Fixed";
+    public static final String BLINK_TIMING_SMART = "Smart";
 
     private static final String ROTATION_SMOOTHING_GROUP = "Rotation Smoothing";
     private static final String RANGE_GROUP = "Range";
@@ -123,6 +126,12 @@ public class KillAura extends Module {
             new String[]{BLOCK_PACKET, BLOCK_VANILLA, BLOCK_FAKE, BLOCK_BLINK}, 0);
     /** Shows a movable HUD row while a Blink block pulse is being held. */
     private final BooleanSetting blinkTextSetting = new BooleanSetting("Blink Text", true);
+    private final ModeSetting blinkTimingSetting = new ModeSetting("Blink Timing",
+            new String[]{BLINK_TIMING_FIXED, BLINK_TIMING_SMART}, 0);
+    private final SliderSetting blinkHoldSetting = new SliderSetting("Blink Hold",
+            BLINK_BLOCK_TICKS, 2, 10, 1);
+    private final SliderSetting blinkGapSetting = new SliderSetting("Blink Gap",
+            BLINK_GAP_TICKS, 1, 6, 1);
     private final SliderSetting blockRangeSetting = new SliderSetting("Block Range", 6.0, 0.0, 8.0, 0.1);
     private final BooleanSetting onMouseDownSetting = new BooleanSetting("On Mouse Down", true);
     private final BooleanSetting stopOnBlockSetting = new BooleanSetting("Stop on Block", false);
@@ -163,6 +172,11 @@ public class KillAura extends Module {
     private boolean blinkBlockActive;
     private int blinkBlockStartedTick;
     private int blinkNextBlockTick;
+    private int blinkBlockHoldTicks = BLINK_BLOCK_TICKS;
+    /** Health of the last tick, so a hit can make Smart Blink guard the follow-up. */
+    private float lastBlinkHealth = -1.0F;
+    private int lastBlinkDamageTick = -1;
+    private final Random blinkRandom = new Random();
 
     public KillAura() {
         super("KillAura", Category.COMBAT);
@@ -188,6 +202,9 @@ public class KillAura extends Module {
         blockingEnabledSetting.setGroup(BLOCKING_GROUP);
         blockingModeSetting.setGroup(BLOCKING_GROUP);
         blinkTextSetting.setGroup(BLOCKING_GROUP);
+        blinkTimingSetting.setGroup(BLOCKING_GROUP);
+        blinkHoldSetting.setGroup(BLOCKING_GROUP);
+        blinkGapSetting.setGroup(BLOCKING_GROUP);
         blockRangeSetting.setGroup(BLOCKING_GROUP);
         onMouseDownSetting.setGroup(BLOCKING_GROUP);
         settings.add(rotationSetting);
@@ -215,6 +232,9 @@ public class KillAura extends Module {
         settings.add(blockingEnabledSetting);
         settings.add(blockingModeSetting);
         settings.add(blinkTextSetting);
+        settings.add(blinkTimingSetting);
+        settings.add(blinkHoldSetting);
+        settings.add(blinkGapSetting);
         settings.add(blockRangeSetting);
         settings.add(onMouseDownSetting);
         settings.add(movementFixSetting);
@@ -239,6 +259,7 @@ public class KillAura extends Module {
             reset();
             return;
         }
+        updateBlinkHealth(mc.thePlayer.ticksExisted);
 
         if (weaponOnlySetting.getValue() && !holdingWeapon()) {
             reset();
@@ -406,6 +427,10 @@ public class KillAura extends Module {
     }
 
     private boolean autoBlockWanted() {
+        return autoBlockWanted(blockThreat());
+    }
+
+    private boolean autoBlockWanted(EntityLivingBase threat) {
         if (mc.thePlayer == null || mc.theWorld == null) return false;
         // On Mouse Down follows the interact key; without it the aura keeps blocking on its
         // own whenever a threat is in Block Range.
@@ -416,7 +441,7 @@ public class KillAura extends Module {
         if (usingOtherItem()) return false;
         // Block Range is independent of attack Range: a threat can be close enough to guard
         // against before the aura is allowed to hit it.
-        return blockThreat() != null;
+        return threat != null;
     }
 
     /**
@@ -462,14 +487,15 @@ public class KillAura extends Module {
      * attack and sprint away at full speed without a NoSlow movement packet.
      */
     private void maintainBlinkBlock() {
-        if (mc.thePlayer == null || !blockingEnabled() || !autoBlockWanted()) {
+        EntityLivingBase threat = blockThreat();
+        if (mc.thePlayer == null || !blockingEnabled() || !autoBlockWanted(threat)) {
             stopBlinkBlock();
             return;
         }
 
         int tick = mc.thePlayer.ticksExisted;
         if (blinkBlockActive) {
-            if (tick - blinkBlockStartedTick >= BLINK_BLOCK_TICKS) stopBlinkBlock();
+            if (tick - blinkBlockStartedTick >= blinkBlockHoldTicks) stopBlinkBlock(threat);
             return;
         }
         if (tick < blinkNextBlockTick || tick == lastBlockPacketTick) return;
@@ -478,20 +504,70 @@ public class KillAura extends Module {
         if (held == null || !(held.getItem() instanceof ItemSword)) return;
         if (!BlinkBlockQueue.beginHold()) return;
 
+        blinkBlockHoldTicks = blinkHoldTicks(threat);
         sendBlockPacket(held);
         blinkBlockActive = true;
         blinkBlockStartedTick = tick;
     }
 
+    /**
+     * Smart timing holds longer when the threat is inside sword reach and keeps the gap short
+     * after a hit, while still leaving a real release window so C03 can flow. Fixed keeps the
+     * exact pulse the user configured.
+     */
+    private int blinkHoldTicks(EntityLivingBase threat) {
+        int base = Math.max(2, Math.min(10, (int) Math.round(blinkHoldSetting.getValue())));
+        if (!isSmartBlink()) return base;
+
+        int hold = base;
+        double distance = hitDistance(threat);
+        if (distance <= 3.2D) hold += 2;
+        else if (distance > 4.5D) hold = Math.max(2, hold - 1);
+        if (recentlyDamaged()) hold += 1;
+        return Math.max(2, hold + blinkRandom.nextInt(2));
+    }
+
+    private int blinkGapTicks(EntityLivingBase threat) {
+        int base = Math.max(1, Math.min(6, (int) Math.round(blinkGapSetting.getValue())));
+        if (!isSmartBlink() || threat == null) return base;
+        if (recentlyDamaged()) return 1;
+
+        double distance = hitDistance(threat);
+        if (distance <= 3.2D) return 1;
+        if (distance <= 4.5D) return Math.max(1, base - 1);
+        return Math.min(6, base + 1);
+    }
+
+    private boolean isSmartBlink() {
+        return BLINK_TIMING_SMART.equals(blinkTimingSetting.getValue());
+    }
+
+    private boolean recentlyDamaged() {
+        return mc.thePlayer != null && lastBlinkDamageTick >= 0
+                && mc.thePlayer.ticksExisted - lastBlinkDamageTick <= 20;
+    }
+
+    private void updateBlinkHealth(int tick) {
+        float health = mc.thePlayer.getHealth();
+        if (lastBlinkHealth >= 0.0F && health < lastBlinkHealth - 1.0E-4F) {
+            lastBlinkDamageTick = tick;
+        }
+        lastBlinkHealth = health;
+    }
+
     /** Ends the current Blink block, sends C07, then releases the held movement. */
     private void stopBlinkBlock() {
+        stopBlinkBlock(mc.thePlayer == null ? null : blockThreat());
+    }
+
+    private void stopBlinkBlock(EntityLivingBase threat) {
         if (!blinkBlockActive) return;
         blinkBlockActive = false;
         BlinkBlockQueue.stopHolding();
         sendReleasePacket();
         BlinkBlockQueue.flush();
         if (mc.thePlayer != null) {
-            blinkNextBlockTick = mc.thePlayer.ticksExisted + BLINK_GAP_TICKS;
+            blinkNextBlockTick = mc.thePlayer.ticksExisted + blinkGapTicks(threat);
         }
     }
 
@@ -1129,6 +1205,7 @@ public class KillAura extends Module {
         mc.thePlayer.swingItem();
         mc.playerController.attackEntity(mc.thePlayer, target);
         ClickState.markAttack(mc.thePlayer.ticksExisted);
+        Diagnostics.noteAttack();
         return true;
     }
 
@@ -1161,6 +1238,9 @@ public class KillAura extends Module {
         targetIndex = 0;
         clickBudget = 1.0D;
         sentInitialised = false;
+        lastBlinkHealth = -1.0F;
+        lastBlinkDamageTick = -1;
+        blinkBlockHoldTicks = BLINK_BLOCK_TICKS;
         if (aimInitialised && isSilentRotations()) {
             // Let the server's rotation return on its own step rather than dropping it.
             returning = true;
@@ -1184,8 +1264,9 @@ public class KillAura extends Module {
     /** The blocking sub-settings only matter once blocking is enabled. */
     @Override
     public boolean isSettingVisible(Setting setting) {
-        // The indicator only means anything while Blink is the mode actually blocking.
-        if (setting == blinkTextSetting) {
+        // The indicator and timing rows only mean anything while Blink is the mode blocking.
+        if (setting == blinkTextSetting || setting == blinkTimingSetting
+                || setting == blinkHoldSetting || setting == blinkGapSetting) {
             return blockingEnabledSetting.getValue() && BLOCK_BLINK.equals(blockingMode());
         }
         if (setting == blockingModeSetting || setting == blockRangeSetting

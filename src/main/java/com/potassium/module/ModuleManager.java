@@ -21,6 +21,7 @@ public class ModuleManager {
         modules.add(new AimAssist());
         modules.add(new HitSelect());
         modules.add(new KillAura());
+        modules.add(new Diagnostics());
         modules.add(new TargetStrafe());
         modules.add(new LeftClicker());
         modules.add(new AntiBot());
@@ -28,6 +29,7 @@ public class ModuleManager {
         modules.add(new RightClicker());
         modules.add(new FastPlace());
         modules.add(new ChestStealer());
+        modules.add(new InvManager());
         modules.add(new AutoArmor());
         modules.add(new AntiKnockback());
         modules.add(new Backtrack());

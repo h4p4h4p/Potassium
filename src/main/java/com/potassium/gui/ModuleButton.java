@@ -281,11 +281,6 @@ public class ModuleButton {
             RenderUtil.drawRect(xr, top, 1, h, color);
             RenderUtil.drawRect(xr + w - 1, top, 1, h, color);
         }
-        if (esp.getPreviewNames()) {
-            String name = "[" + player.getName() + "]";
-            RenderUtil.drawGuiString(name, cx - RenderUtil.getGuiTextWidth(name) / 2f, top - 11f, esp.getPreviewNameColor());
-        }
-
         RenderUtil.restoreGlState(glState);
     }
 

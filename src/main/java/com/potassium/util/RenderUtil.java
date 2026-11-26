@@ -231,6 +231,32 @@ public class RenderUtil {
         GL11.glDisable(GL11.GL_SCISSOR_TEST);
     }
 
+    /** A 2D line with a fixed stroke width, used by the ESP's tracers. */
+    public static void drawLine(float x1, float y1, float x2, float y2, float width, int color) {
+        float a = (color >> 24 & 255) / 255.0F;
+        float r = (color >> 16 & 255) / 255.0F;
+        float g = (color >> 8 & 255) / 255.0F;
+        float b = (color & 255) / 255.0F;
+
+        GlStateManager.enableBlend();
+        GlStateManager.disableTexture2D();
+        GlStateManager.tryBlendFuncSeparate(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA, 1, 0);
+        GL11.glEnable(GL11.GL_LINE_SMOOTH);
+        GL11.glLineWidth(Math.max(1.0F, width));
+
+        Tessellator tessellator = Tessellator.getInstance();
+        WorldRenderer wr = tessellator.getWorldRenderer();
+        wr.begin(GL11.GL_LINES, DefaultVertexFormats.POSITION_COLOR);
+        wr.pos(x1, y1, 0.0D).color(r, g, b, a).endVertex();
+        wr.pos(x2, y2, 0.0D).color(r, g, b, a).endVertex();
+        tessellator.draw();
+
+        GL11.glDisable(GL11.GL_LINE_SMOOTH);
+        GL11.glLineWidth(1.0F);
+        GlStateManager.enableTexture2D();
+        GlStateManager.disableBlend();
+    }
+
     public static void drawBatchedRects(float[] quads, int count, int color) {
         if (count == 0) return;
         float a = (color >> 24 & 255) / 255.0F;

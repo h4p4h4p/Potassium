@@ -11,11 +11,9 @@ import net.minecraft.client.gui.ScaledResolution;
 import net.minecraft.client.renderer.GlStateManager;
 import net.minecraft.client.renderer.Tessellator;
 import net.minecraft.entity.Entity;
+import net.minecraft.entity.player.EntityPlayer;
 import net.minecraft.util.AxisAlignedBB;
-import net.minecraft.util.MovingObjectPosition;
-import net.minecraft.util.Vec3;
 import net.minecraftforge.client.event.RenderGameOverlayEvent;
-import net.minecraftforge.client.event.RenderLivingEvent;
 import net.minecraftforge.client.event.RenderWorldLastEvent;
 import net.minecraftforge.common.MinecraftForge;
 import net.minecraftforge.fml.common.eventhandler.SubscribeEvent;
@@ -27,6 +25,13 @@ import java.nio.IntBuffer;
 import java.util.Arrays;
 import java.util.List;
 
+/**
+ * Player boxes in 2D or 3D, with optional tracers from the bottom of the screen.
+ *
+ * <p>The 2D and tracer passes share the projection captured during the world render, so
+ * their positions are the same points the world boxes were built from. Names and the old
+ * visibility-limited LegitESP mode have been removed; vanilla nametags are left alone.</p>
+ */
 public class Esp extends Module {
 
     public static final String MODE_2D = "2D";
@@ -41,10 +46,10 @@ public class Esp extends Module {
     private final ModeSetting modeSetting = new ModeSetting("Mode",
             new String[]{MODE_2D, MODE_3D}, 1);
     private final BooleanSetting cornersSetting = new BooleanSetting("Corners", false);
-    private final BooleanSetting namesSetting = new BooleanSetting("Names", true);
-    private final BooleanSetting legitSetting = new BooleanSetting("LegitESP", false);
+    private final BooleanSetting tracersSetting = new BooleanSetting("Tracers", false);
     private final ColorSetting colorSetting = new ColorSetting("Color", 0xFF1B395C);
-    private final ColorSetting nameColorSetting = new ColorSetting("Name Color", 0xFFFFFFFF);
+    private final ColorSetting tracerColorSetting =
+            new ColorSetting("Tracer Color", 0xFFF0A612);
     private final BooleanSetting throughWallsSetting = new BooleanSetting("Through Walls", true);
     private final SliderSetting rangeSetting = new SliderSetting("Range", 64, 8, 256, 1);
 
@@ -66,19 +71,17 @@ public class Esp extends Module {
     private float[] quadBuf = new float[512];
     private int quadCount;
 
-    private String[] nameTexts = new String[64];
-    private float[] nameXs = new float[64];
-    private float[] nameYs = new float[64];
-    private int nameCount;
+    private float[] tracerXs = new float[64];
+    private float[] tracerYs = new float[64];
+    private int tracerCount;
 
     public Esp() {
         super("ESP", Category.RENDER);
         settings.add(modeSetting);
         settings.add(cornersSetting);
-        settings.add(namesSetting);
-        settings.add(legitSetting);
+        settings.add(tracersSetting);
         settings.add(colorSetting);
-        settings.add(nameColorSetting);
+        settings.add(tracerColorSetting);
         settings.add(throughWallsSetting);
         settings.add(rangeSetting);
         MinecraftForge.EVENT_BUS.register(this);
@@ -87,8 +90,8 @@ public class Esp extends Module {
     @Override
     public boolean isSettingVisible(Setting setting) {
         if (setting == cornersSetting) return MODE_2D.equals(modeSetting.getValue());
+        if (setting == tracerColorSetting) return tracersSetting.getValue();
         if (setting == throughWallsSetting) return MODE_3D.equals(modeSetting.getValue());
-        if (setting == nameColorSetting) return namesSetting.getValue();
         return true;
     }
 
@@ -96,16 +99,8 @@ public class Esp extends Module {
         return colorSetting.getValue();
     }
 
-    public int getPreviewNameColor() {
-        return nameColorSetting.getValue();
-    }
-
     public boolean getPreviewCorners() {
         return cornersSetting.getValue();
-    }
-
-    public boolean getPreviewNames() {
-        return namesSetting.getValue();
     }
 
     @SubscribeEvent
@@ -113,7 +108,7 @@ public class Esp extends Module {
         if (!isEnabled()) return;
         if (mc.thePlayer == null || mc.theWorld == null) return;
         quadCount = 0;
-        nameCount = 0;
+        tracerCount = 0;
         if (!captureMatrices()) return;
         collect2D(event.partialTicks);
         if (MODE_3D.equals(modeSetting.getValue())) render3D(event.partialTicks);
@@ -126,26 +121,8 @@ public class Esp extends Module {
         if (quadCount > 0) {
             RenderUtil.drawBatchedRects(quadBuf, quadCount, colorSetting.getValue());
         }
-        if (nameCount > 0) {
-            int nameColor = nameColorSetting.getValue();
-            for (int i = 0; i < nameCount; i++) {
-                String text = nameTexts[i];
-                RenderUtil.drawGuiString(text, nameXs[i] - RenderUtil.getGuiTextWidth(text) * 0.5f,
-                        nameYs[i] - RenderUtil.getGuiTextHeight(), nameColor);
-            }
-        }
+        drawTracers();
     }
-
-    @SubscribeEvent
-    public void onRenderName(RenderLivingEvent.Specials.Pre event) {
-        if (!isEnabled()) return;
-        if (!namesSetting.getValue()) return;
-        if (event.entity instanceof net.minecraft.entity.player.EntityPlayer) {
-            event.setCanceled(true);
-        }
-    }
-
-    
 
     /**
      * World-space boxes the size of the entity's real hitbox, so the outline matches
@@ -172,7 +149,6 @@ public class Esp extends Module {
             if (entity == mc.thePlayer) continue;
             if (AntiBot.isBot(entity)) continue;
             if (!inRange(entity, camX, camY, camZ)) continue;
-            if (legitSetting.getValue() && !isEntityVisible(entity, camX, camY, camZ)) continue;
 
             double ox = entity.lastTickPosX + (entity.posX - entity.lastTickPosX) * partialTicks - entity.posX;
             double oy = entity.lastTickPosY + (entity.posY - entity.lastTickPosY) * partialTicks - entity.posY;
@@ -224,32 +200,40 @@ public class Esp extends Module {
         return scale > 0;
     }
 
-    private void storeName(String text, double screenX, double screenY) {
-        if (nameCount == nameTexts.length) {
-            nameTexts = Arrays.copyOf(nameTexts, nameCount * 2);
-            nameXs = Arrays.copyOf(nameXs, nameCount * 2);
-            nameYs = Arrays.copyOf(nameYs, nameCount * 2);
+    private void storeTracer(double screenX, double screenY) {
+        if (tracerCount == tracerXs.length) {
+            tracerXs = Arrays.copyOf(tracerXs, tracerCount * 2);
+            tracerYs = Arrays.copyOf(tracerYs, tracerCount * 2);
         }
-        nameTexts[nameCount] = "[" + text + "]";
-        nameXs[nameCount] = (float) (screenX / scale);
-        nameYs[nameCount] = (float) ((vh - screenY) / scale);
-        nameCount++;
+        tracerXs[tracerCount] = (float) (screenX / scale);
+        tracerYs[tracerCount] = (float) ((vh - screenY) / scale);
+        tracerCount++;
+    }
+
+    private void drawTracers() {
+        if (tracerCount == 0) return;
+        ScaledResolution sr = new ScaledResolution(mc);
+        float originX = sr.getScaledWidth() / 2f;
+        float originY = sr.getScaledHeight();
+        int color = tracerColorSetting.getValue();
+        for (int i = 0; i < tracerCount; i++) {
+            RenderUtil.drawLine(originX, originY, tracerXs[i], tracerYs[i], 1.5f, color);
+        }
+        tracerCount = 0;
     }
 
     private void collect2D(float partialTicks) {
         double camX = mc.getRenderManager().viewerPosX;
         double camY = mc.getRenderManager().viewerPosY;
         double camZ = mc.getRenderManager().viewerPosZ;
-        boolean showNames = namesSetting.getValue();
-        boolean legit = legitSetting.getValue();
+        boolean showTracers = tracersSetting.getValue();
 
-        List<net.minecraft.entity.player.EntityPlayer> players = mc.theWorld.playerEntities;
+        List<EntityPlayer> players = mc.theWorld.playerEntities;
         for (int i = 0; i < players.size(); i++) {
             Entity entity = players.get(i);
             if (entity == mc.thePlayer) continue;
             if (AntiBot.isBot(entity)) continue;
             if (!inRange(entity, camX, camY, camZ)) continue;
-            if (legit && !isEntityVisible(entity, camX, camY, camZ)) continue;
             AxisAlignedBB bb = entity.getEntityBoundingBox();
 
             double ox = entity.lastTickPosX + (entity.posX - entity.lastTickPosX) * partialTicks - entity.posX;
@@ -276,7 +260,7 @@ public class Esp extends Module {
             float rh = (float) (h / scale);
 
             if (MODE_2D.equals(modeSetting.getValue())) addRect(x, y, rw, rh);
-            if (showNames) storeName(entity.getName(), headScratch[0], headScratch[1]);
+            if (showTracers) storeTracer(headScratch[0], headScratch[1]);
         }
     }
 
@@ -359,15 +343,6 @@ public class Esp extends Module {
         return dx * dx + dy * dy + dz * dz <= range * range;
     }
 
-    private boolean isEntityVisible(Entity entity, double camX, double camY, double camZ) {
-        if (mc.theWorld == null) return false;
-        Vec3 start = new Vec3(camX, camY, camZ);
-        AxisAlignedBB bb = entity.getEntityBoundingBox().expand(0.5, 0.5, 0.5);
-        Vec3 end = new Vec3(bb.minX + (bb.maxX - bb.minX) * 0.5, bb.minY + (bb.maxY - bb.minY) * 0.5, bb.minZ + (bb.maxZ - bb.minZ) * 0.5);
-        MovingObjectPosition mop = mc.theWorld.rayTraceBlocks(start, end, false, true, false);
-        return mop == null || mop.typeOfHit != MovingObjectPosition.MovingObjectType.BLOCK;
-    }
-
     @Override
     public void onEnable() {
     }
@@ -375,6 +350,6 @@ public class Esp extends Module {
     @Override
     public void onDisable() {
         quadCount = 0;
-        nameCount = 0;
+        tracerCount = 0;
     }
 }
