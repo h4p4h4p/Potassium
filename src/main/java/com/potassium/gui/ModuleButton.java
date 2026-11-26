@@ -9,8 +9,6 @@ import net.minecraft.client.entity.EntityOtherPlayerMP;
 import net.minecraft.client.renderer.GlStateManager;
 import net.minecraft.client.renderer.RenderHelper;
 import net.minecraft.client.renderer.entity.RenderManager;
-import org.apache.logging.log4j.LogManager;
-import org.apache.logging.log4j.Logger;
 
 import java.lang.reflect.Field;
 import java.util.ArrayList;
@@ -20,7 +18,6 @@ import java.util.Map;
 
 public class ModuleButton {
 
-    private static final Logger LOGGER = LogManager.getLogger("Potassium");
     private static final float ROW_HEIGHT = 13f;
     private static final float EXPAND_ZONE = 12f;
     public static final float PREVIEW_WIDTH = 88f;
@@ -214,32 +211,56 @@ public class ModuleButton {
 
         int color = esp.getPreviewColor();
 
-        logPreviewLayout(px, pw, x, width);
-
         float cx = px + pw / 2f;
         float top = py + 4f;
         float bottom = py + ph - 4f;
         float scale = (bottom - top) / 1.8f;
 
-        // The model is rendered inside the GUI pass: depth, lighting, texture and cull all
-        // change here, so save them and give the renderer back the state it had.
+        // The model is rendered inside the GUI pass. The separator drawn just before this
+        // leaves the last GUI colour set, so reset it or the player texture is tinted (and
+        // made translucent) by that rectangle. Lighting, depth, culling and texture state are
+        // restored before the 2D ESP frame is drawn, so the frame cannot inherit depth writes
+        // from the model.
         RenderUtil.GlState glState = RenderUtil.saveGlState();
+        RenderManager renderManager = mc.getRenderManager();
+        float previousViewY = renderManager.playerViewY;
+        boolean previousShadow = renderManager.isRenderShadow();
 
+        GlStateManager.disableBlend();
+        GlStateManager.enableTexture2D();
+        GlStateManager.enableDepth();
+        GlStateManager.depthMask(true);
+        GlStateManager.enableCull();
+        GlStateManager.color(1.0F, 1.0F, 1.0F, 1.0F);
         GlStateManager.enableColorMaterial();
         GlStateManager.enableRescaleNormal();
         GlStateManager.pushMatrix();
-        GlStateManager.translate(cx, bottom, 80.0F);
+        GlStateManager.translate(cx, bottom, 50.0F);
         GlStateManager.scale(-scale, scale, scale);
         GlStateManager.rotate(180.0F, 0.0F, 0.0F, 1.0F);
         GlStateManager.rotate(135.0F, 0.0F, 1.0F, 0.0F);
         RenderHelper.enableStandardItemLighting();
-        if (!glState.isDepthTest()) GlStateManager.enableDepth();
-        mc.getRenderManager().renderEntityWithPosYaw(player, 0.0D, 0.0D, 0.0D, 0.0F, 1.0F);
+        // Undo the display rotation so the model faces the viewer; vanilla's inventory
+        // preview does the same after setting up the lights.
+        GlStateManager.rotate(-135.0F, 0.0F, 1.0F, 0.0F);
+        // A world shadow does not belong in a GUI preview and was being rendered as a dark
+        // patch over the model. playerViewY 180 keeps the preview oriented like inventory.
+        renderManager.setPlayerViewY(180.0F);
+        renderManager.setRenderShadow(false);
+        renderManager.renderEntityWithPosYaw(player, 0.0D, 0.0D, 0.0D, 0.0F, 1.0F);
         RenderHelper.disableStandardItemLighting();
 
         GlStateManager.popMatrix();
         GlStateManager.disableRescaleNormal();
         GlStateManager.disableColorMaterial();
+        renderManager.setPlayerViewY(previousViewY);
+        renderManager.setRenderShadow(previousShadow);
+        RenderUtil.restoreGlState(glState);
+
+        // The frame is a 2D overlay on top of the model. Draw it without the model's depth
+        // writes, then restore the GUI state once more for the next widget.
+        GlStateManager.disableDepth();
+        GlStateManager.depthMask(false);
 
         float h = bottom - top;
         float w = h * 0.5f;
@@ -261,7 +282,7 @@ public class ModuleButton {
             RenderUtil.drawRect(xr + w - 1, top, 1, h, color);
         }
         if (esp.getPreviewNames()) {
-            String name = "[Steve]";
+            String name = "[" + player.getName() + "]";
             RenderUtil.drawGuiString(name, cx - RenderUtil.getGuiTextWidth(name) / 2f, top - 11f, esp.getPreviewNameColor());
         }
 
@@ -299,15 +320,6 @@ public class ModuleButton {
     }
 
     private static final Map<String, Field> RENDER_POS_FIELDS = new HashMap<>();
-
-    private float lastLoggedPx = Float.NaN;
-
-    private void logPreviewLayout(float px, float pw, float buttonX, float buttonW) {
-        if (lastLoggedPx != px) {
-            lastLoggedPx = px;
-            LOGGER.info("ESP preview at px={} pw={} buttonX={} buttonW={}", px, pw, buttonX, buttonW);
-        }
-    }
 
     private double getRenderPos(String name) {
         try {
