@@ -96,6 +96,8 @@ public class ConfigManager {
             lines.add("Hud.targetHud.x=" + hud.getTargetHud().getStoredX());
             lines.add("Hud.targetHud.y=" + hud.getTargetHud().getStoredY());
         }
+        lines.add("Hud.blinkText.x=" + hud.getBlinkText().getStoredX());
+        lines.add("Hud.blinkText.y=" + hud.getBlinkText().getStoredY());
         lines.add("Hud.textCount=" + hud.getTexts().size());
         for (int i = 0; i < hud.getTexts().size(); i++) {
             TextHudElement text = hud.getTexts().get(i);
@@ -135,6 +137,14 @@ public class ConfigManager {
         if (values.containsKey("Hud.targetHud.y")) {
             hud.getTargetHud().setY(intValue(values, "Hud.targetHud.y",
                     hud.getTargetHud().getY()));
+        }
+        if (values.containsKey("Hud.blinkText.x")) {
+            hud.getBlinkText().setX(intValue(values, "Hud.blinkText.x",
+                    hud.getBlinkText().getX()));
+        }
+        if (values.containsKey("Hud.blinkText.y")) {
+            hud.getBlinkText().setY(intValue(values, "Hud.blinkText.y",
+                    hud.getBlinkText().getY()));
         }
 
         hud.clearTexts();

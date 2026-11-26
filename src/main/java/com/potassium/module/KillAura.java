@@ -121,6 +121,8 @@ public class KillAura extends Module {
     private final BooleanSetting blockingEnabledSetting = new BooleanSetting("Blocking", false);
     private final ModeSetting blockingModeSetting = new ModeSetting("Block Mode",
             new String[]{BLOCK_PACKET, BLOCK_VANILLA, BLOCK_FAKE, BLOCK_BLINK}, 0);
+    /** Shows a movable HUD row while a Blink block pulse is being held. */
+    private final BooleanSetting blinkTextSetting = new BooleanSetting("Blink Text", true);
     private final SliderSetting blockRangeSetting = new SliderSetting("Block Range", 6.0, 0.0, 8.0, 0.1);
     private final BooleanSetting onMouseDownSetting = new BooleanSetting("On Mouse Down", true);
     private final BooleanSetting stopOnBlockSetting = new BooleanSetting("Stop on Block", false);
@@ -185,6 +187,7 @@ public class KillAura extends Module {
         holdAttackSetting.setGroup(CONDITIONS_GROUP);
         blockingEnabledSetting.setGroup(BLOCKING_GROUP);
         blockingModeSetting.setGroup(BLOCKING_GROUP);
+        blinkTextSetting.setGroup(BLOCKING_GROUP);
         blockRangeSetting.setGroup(BLOCKING_GROUP);
         onMouseDownSetting.setGroup(BLOCKING_GROUP);
         settings.add(rotationSetting);
@@ -211,6 +214,7 @@ public class KillAura extends Module {
         settings.add(holdAttackSetting);
         settings.add(blockingEnabledSetting);
         settings.add(blockingModeSetting);
+        settings.add(blinkTextSetting);
         settings.add(blockRangeSetting);
         settings.add(onMouseDownSetting);
         settings.add(movementFixSetting);
@@ -1180,6 +1184,10 @@ public class KillAura extends Module {
     /** The blocking sub-settings only matter once blocking is enabled. */
     @Override
     public boolean isSettingVisible(Setting setting) {
+        // The indicator only means anything while Blink is the mode actually blocking.
+        if (setting == blinkTextSetting) {
+            return blockingEnabledSetting.getValue() && BLOCK_BLINK.equals(blockingMode());
+        }
         if (setting == blockingModeSetting || setting == blockRangeSetting
                 || setting == onMouseDownSetting) {
             return blockingEnabledSetting.getValue();
@@ -1199,9 +1207,24 @@ public class KillAura extends Module {
         return true;
     }
 
-    /** The aura instance, used by TargetHUD and TargetStrafe. */
+    /** The aura instance, used by TargetHUD, TargetStrafe and the Blink Text HUD row. */
     public static KillAura instance() {
         return instance;
+    }
+
+    /** True while the server is held in a Blink block pulse. */
+    public boolean isBlinkBlockActive() {
+        return blinkBlockActive;
+    }
+
+    /** Whether Blink is the selected, enabled block mode. */
+    public boolean isBlinkModeSelected() {
+        return blockingEnabled() && BLOCK_BLINK.equals(blockingMode());
+    }
+
+    /** Whether the Blink Text indicator is switched on. */
+    public boolean isBlinkTextEnabled() {
+        return blinkTextSetting.getValue();
     }
 
     /** The target the aura is aiming at, or null when it has none. */

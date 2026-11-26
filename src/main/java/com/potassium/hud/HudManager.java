@@ -31,6 +31,7 @@ public class HudManager {
     private final KeybindViewerHudElement keybindViewer = new KeybindViewerHudElement(watermark);
     private final FpsHudElement fps = new FpsHudElement();
     private final TargetHudElement targetHud = new TargetHudElement();
+    private final BlinkTextHudElement blinkText = new BlinkTextHudElement();
     private final List<TextHudElement> texts = new ArrayList<>();
     private final List<HudElement> elements = new ArrayList<>();
 
@@ -48,6 +49,7 @@ public class HudManager {
         elements.add(keybindViewer);
         elements.add(fps);
         elements.add(targetHud);
+        elements.add(blinkText);
         MinecraftForge.EVENT_BUS.register(this);
     }
 
@@ -69,6 +71,10 @@ public class HudManager {
 
     public TargetHudElement getTargetHud() {
         return targetHud;
+    }
+
+    public BlinkTextHudElement getBlinkText() {
+        return blinkText;
     }
 
     public List<TextHudElement> getTexts() {
