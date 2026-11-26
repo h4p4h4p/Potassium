@@ -254,21 +254,18 @@ public class ConfigManager {
             values.put("Speed.Mode", "0");
         }
 
-        // KillAura's Rotations lost the Off entry and Alert Distance became its own switch,
-        // so both Mode indices shift for configs written before version 4.
+        // KillAura's Rotations lost the Off entry, so its indices shift for configs
+        // written before version 4.
         if (configVersion < 4) {
             String rotations = values.get("KillAura.Rotations");
             if ("1".equals(rotations)) values.put("KillAura.Rotations", "0");
             else if ("2".equals(rotations)) values.put("KillAura.Rotations", "1");
-            if ("2".equals(values.get("KillAura.Mode"))) {
-                values.put("KillAura.Mode", "0");
-                values.putIfAbsent("KillAura.Alert Distance", "true");
-            }
+            if ("2".equals(values.get("KillAura.Mode"))) values.put("KillAura.Mode", "0");
         }
 
         // KillAura now ships with Silent rotations: the camera stays free while the server
-        // receives the aim. Configs still on the old Normal default follow it; Normal can be
-        // selected again afterwards, and saving with the new version keeps that choice.
+        // receives the aim. Configs still on the old camera default follow it; Lock View can
+        // be selected again afterwards, and saving with the new version keeps that choice.
         if (configVersion < 8 && "0".equals(values.get("KillAura.Rotations"))) {
             values.put("KillAura.Rotations", "1");
         }
@@ -300,6 +297,14 @@ public class ConfigManager {
         // instead of letting the old index clamp to Fake.
         if (configVersion < 11 && "3".equals(values.get("KillAura.Block Mode"))) {
             values.put("KillAura.Block Mode", "1");
+        }
+
+        // Players Only became independent target filters. An old all-entities setting
+        // should still include passive and hostile mobs on the next load.
+        if ("false".equalsIgnoreCase(values.get("KillAura.Players Only"))) {
+            values.putIfAbsent("KillAura.Players", "true");
+            values.putIfAbsent("KillAura.Passive", "true");
+            values.putIfAbsent("KillAura.Hostile", "true");
         }
 
         // KillAura's Movement Fix was a boolean; Strict (1) is the old true state.

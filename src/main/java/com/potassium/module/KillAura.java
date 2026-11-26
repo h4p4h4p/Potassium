@@ -1,6 +1,5 @@
 package com.potassium.module;
 
-import com.potassium.command.CommandManager;
 import com.potassium.settings.BooleanSetting;
 import com.potassium.settings.ModeSetting;
 import com.potassium.settings.RangeSetting;
@@ -15,6 +14,10 @@ import net.minecraft.client.entity.EntityPlayerSP;
 import net.minecraft.client.settings.KeyBinding;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.EntityLivingBase;
+import net.minecraft.entity.SharedMonsterAttributes;
+import net.minecraft.entity.ai.attributes.AttributeModifier;
+import net.minecraft.entity.monster.EntityIronGolem;
+import net.minecraft.entity.monster.IMob;
 import net.minecraft.entity.player.EntityPlayer;
 import net.minecraft.item.Item;
 import net.minecraft.item.ItemAxe;
@@ -39,7 +42,6 @@ import org.lwjgl.input.Mouse;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Locale;
 
 /**
  * Selects visible targets in range, turns toward them and attacks them with LeftClicker-style
@@ -51,8 +53,13 @@ import java.util.Locale;
  */
 public class KillAura extends Module {
 
-    public static final String ROTATION_NORMAL = "Normal";
+    public static final String ROTATION_LOCK_VIEW = "Lock View";
     public static final String ROTATION_SILENT = "Silent";
+
+    public static final String PRIORITY_SMART = "Smart";
+    public static final String PRIORITY_DAMAGE = "Damage";
+    public static final String PRIORITY_HEALTH = "Health";
+    public static final String PRIORITY_DISTANCE = "Distance";
 
     public static final String MOVE_FIX_NONE = "None";
     public static final String MOVE_FIX_SILENT = "Silent";
@@ -63,6 +70,8 @@ public class KillAura extends Module {
     public static final String BLOCK_FAKE = "Fake";
 
     private static final String ROTATION_SMOOTHING_GROUP = "Rotation Smoothing";
+    private static final String RANGE_GROUP = "Range";
+    private static final String TARGETS_GROUP = "Targets";
     private static final String CONDITIONS_GROUP = "Conditions";
     private static final String BLOCKING_GROUP = "Blocking";
     /** How long the view may take easing back to the camera, in ticks. */
@@ -70,8 +79,9 @@ public class KillAura extends Module {
 
     // Silent: the server receives the aim while the camera stays under the player's control.
     private final ModeSetting rotationSetting = new ModeSetting("Rotations",
-            new String[]{ROTATION_NORMAL, ROTATION_SILENT}, 1);
-    private final BooleanSetting alertDistanceSetting = new BooleanSetting("Alert Distance", false);
+            new String[]{ROTATION_LOCK_VIEW, ROTATION_SILENT}, 1);
+    private final ModeSetting prioritySetting = new ModeSetting("Priority",
+            new String[]{PRIORITY_SMART, PRIORITY_DAMAGE, PRIORITY_HEALTH, PRIORITY_DISTANCE}, 0);
     private final SliderSetting rangeSetting = new SliderSetting("Range", 4.5, 1.0, 6.0, 0.1);
     private final SliderSetting targetsSetting = new SliderSetting("Targets", 1, 1, 4, 1);
     private final SliderSetting reachSetting = new SliderSetting("Reach", 3.0, 1.0, 4.5, 0.1);
@@ -83,7 +93,11 @@ public class KillAura extends Module {
             new RangeSetting("Horizontal Speed", 180, 180, 0, 180, 1);
     private final RangeSetting verticalSpeedSetting =
             new RangeSetting("Vertical Speed", 180, 180, 0, 180, 1);
-    private final BooleanSetting playersOnlySetting = new BooleanSetting("Players Only", true);
+    private final BooleanSetting playersSetting = new BooleanSetting("Players", true);
+    private final BooleanSetting passiveSetting = new BooleanSetting("Passive", false);
+    private final BooleanSetting hostileSetting = new BooleanSetting("Hostile", false);
+    private final BooleanSetting teammatesSetting = new BooleanSetting("Teammates", false);
+    private final BooleanSetting invisiblesSetting = new BooleanSetting("Invisibles", true);
     private final BooleanSetting wallCheckSetting = new BooleanSetting("Wall Check", true);
     private final BooleanSetting weaponOnlySetting = new BooleanSetting("Weapon Only", false);
     private final BooleanSetting blockingEnabledSetting = new BooleanSetting("Blocking", false);
@@ -102,7 +116,7 @@ public class KillAura extends Module {
     private double clickBudget = 1.0D;
     private final RotationSmoother aim = new RotationSmoother();
     private boolean aimInitialised;
-    /** This tick's turn for Normal rotations, carried out across the tick's frames. */
+    /** This tick's turn for Lock View rotations, carried out across the tick's frames. */
     private float normalTurnYaw;
     private float normalTurnPitch;
     private boolean normalTurnSet;
@@ -133,7 +147,14 @@ public class KillAura extends Module {
         smoothingSetting.setGroup(ROTATION_SMOOTHING_GROUP);
         horizontalSpeedSetting.setGroup(ROTATION_SMOOTHING_GROUP);
         verticalSpeedSetting.setGroup(ROTATION_SMOOTHING_GROUP);
-        playersOnlySetting.setGroup(CONDITIONS_GROUP);
+        rangeSetting.setGroup(RANGE_GROUP);
+        reachSetting.setGroup(RANGE_GROUP);
+        fovSetting.setGroup(RANGE_GROUP);
+        playersSetting.setGroup(TARGETS_GROUP);
+        passiveSetting.setGroup(TARGETS_GROUP);
+        hostileSetting.setGroup(TARGETS_GROUP);
+        teammatesSetting.setGroup(TARGETS_GROUP);
+        invisiblesSetting.setGroup(TARGETS_GROUP);
         wallCheckSetting.setGroup(CONDITIONS_GROUP);
         weaponOnlySetting.setGroup(CONDITIONS_GROUP);
         stopOnBlockSetting.setGroup(CONDITIONS_GROUP);
@@ -142,23 +163,27 @@ public class KillAura extends Module {
         blockRangeSetting.setGroup(BLOCKING_GROUP);
         onMouseDownSetting.setGroup(BLOCKING_GROUP);
         settings.add(rotationSetting);
-        settings.add(alertDistanceSetting);
-        settings.add(rangeSetting);
+        settings.add(prioritySetting);
         settings.add(targetsSetting);
+        settings.add(rangeSetting);
         settings.add(reachSetting);
         settings.add(fovSetting);
-        settings.add(blockingEnabledSetting);
-        settings.add(blockingModeSetting);
-        settings.add(blockRangeSetting);
-        settings.add(onMouseDownSetting);
+        settings.add(playersSetting);
+        settings.add(passiveSetting);
+        settings.add(hostileSetting);
+        settings.add(teammatesSetting);
+        settings.add(invisiblesSetting);
         settings.add(cpsSetting);
         settings.add(smoothingSetting);
         settings.add(horizontalSpeedSetting);
         settings.add(verticalSpeedSetting);
-        settings.add(playersOnlySetting);
         settings.add(wallCheckSetting);
         settings.add(weaponOnlySetting);
         settings.add(stopOnBlockSetting);
+        settings.add(blockingEnabledSetting);
+        settings.add(blockingModeSetting);
+        settings.add(blockRangeSetting);
+        settings.add(onMouseDownSetting);
         settings.add(movementFixSetting);
         MinecraftForge.EVENT_BUS.register(this);
     }
@@ -332,17 +357,14 @@ public class KillAura extends Module {
         if (mc.thePlayer == null || mc.theWorld == null) return null;
         double range = blockRangeSetting.getValue();
         if (range <= 0.0D) return null;
-        if (target != null && target.isEntityAlive() && hitDistance(target) <= range) return target;
+        if (target != null && canTarget(target) && hitDistance(target) <= range) return target;
 
         EntityLivingBase nearest = null;
         double nearestDistance = range;
         for (Entity entity : mc.theWorld.loadedEntityList) {
-            if (entity == mc.thePlayer || entity.isDead || !(entity instanceof EntityLivingBase)) continue;
+            if (!(entity instanceof EntityLivingBase)) continue;
             EntityLivingBase living = (EntityLivingBase) entity;
-            if (!living.isEntityAlive()) continue;
-            if (playersOnlySetting.getValue() && !(living instanceof EntityPlayer)) continue;
-            if (living instanceof EntityPlayer && ((EntityPlayer) living).isSpectator()) continue;
-            if (AntiBot.isBot(living)) continue;
+            if (!canTarget(living)) continue;
 
             double distance = hitDistance(living);
             if (distance > nearestDistance) continue;
@@ -507,10 +529,10 @@ public class KillAura extends Module {
     }
 
     /**
-     * Puts the tick's Normal rotation on the mouse grid before vanilla builds the movement
+     * Puts the tick's Lock View rotation on the mouse grid before vanilla builds the movement
      * packet.
      *
-     * <p>Normal rotations are the camera, and the module turns it frame by frame, so the delta
+     * <p>Lock View rotations are the camera, and the module turns it frame by frame, so the delta
      * between two movement packets is a fractional angle. A hand cannot produce one: vanilla
      * only ever adds whole mouse counts, and a server dividing the delta by the count step
      * finds no sensitivity that fits it. Rounding this tick's camera onto whole counts, the
@@ -519,7 +541,7 @@ public class KillAura extends Module {
      * is put back at the end of the tick.</p>
      */
     @SubscribeEvent(priority = EventPriority.LOW)
-    public void onNormalAimPacket(TickEvent.PlayerTickEvent event) {
+    public void onLockViewAimPacket(TickEvent.PlayerTickEvent event) {
         if (event.phase != TickEvent.Phase.END) return;
         if (!isEnabled() || isSilentRotations() || !normalTurnSet) return;
         // Another module is already aiming this tick; its rotation is the one that goes out.
@@ -546,16 +568,12 @@ public class KillAura extends Module {
         sentInitialised = true;
     }
 
-    private boolean isAlertDistance() {
-        return alertDistanceSetting.getValue();
-    }
-
     @SubscribeEvent
     public void onRenderWorld(RenderWorldLastEvent event) {
         if (mc.thePlayer == null || mc.theWorld == null || mc.currentScreen != null) return;
         if (isSilentRotations() || !normalTurnSet) return;
 
-        // Normal rotations are the camera, so this tick's turn is added as it is drawn rather
+        // Lock View rotations are the camera, so this tick's turn is added as it is drawn rather
         // than pulled out of a stored target: whatever the mouse has moved since the turn was
         // chosen stays, and the turn finishes inside its own tick. Drawn across the frames of
         // the tick, a turn is no slower than the game's own look and no longer steps at 20 Hz.
@@ -582,27 +600,25 @@ public class KillAura extends Module {
         float fov = (float) fovSetting.getValue();
 
         double maxDistance = rangeSetting.getValue();
-        double maxDistanceSq = maxDistance * maxDistance;
         List<TargetCandidate> candidates = new ArrayList<>();
 
         for (Entity entity : mc.theWorld.loadedEntityList) {
-            if (entity == player || entity.isDead || !(entity instanceof EntityLivingBase)) continue;
-            if (!entity.isEntityAlive()) continue;
-            if (playersOnlySetting.getValue() && !(entity instanceof EntityPlayer)) continue;
-            if (entity instanceof EntityPlayer && ((EntityPlayer) entity).isSpectator()) continue;
-            if (AntiBot.isBot(entity)) continue;
-
+            if (!(entity instanceof EntityLivingBase)) continue;
             EntityLivingBase living = (EntityLivingBase) entity;
+            if (!canTarget(living)) continue;
+
+            // Range is measured from the eyes to the closest point on the target's hitbox,
+            // rather than to its centre; the centre made the reach depend on target height.
+            double distance = hitDistance(living);
+            if (distance > maxDistance) continue;
+
             double targetX = living.posX;
             double targetY = living.posY + living.getEyeHeight();
             double targetZ = living.posZ;
-
             double dx = targetX - eyeX;
             double dy = targetY - eyeY;
             double dz = targetZ - eyeZ;
             double horizontal = Math.sqrt(dx * dx + dz * dz);
-            double distanceSq = horizontal * horizontal + dy * dy;
-            if (distanceSq > maxDistanceSq) continue;
 
             float yaw = (float) (Math.toDegrees(Math.atan2(dz, dx)) - 90.0D);
             float pitch = (float) -Math.toDegrees(Math.atan2(dy, horizontal));
@@ -611,12 +627,66 @@ public class KillAura extends Module {
             if (yawDifference > fov || pitchDifference > fov) continue;
             if (wallCheckSetting.getValue() && aimPoint(living) == null) continue;
 
-            double score = yawDifference + pitchDifference + Math.sqrt(distanceSq) * 0.05D;
-            candidates.add(new TargetCandidate(living, score));
+            candidates.add(new TargetCandidate(living, scoreTarget(living, distance)));
         }
 
         candidates.sort((a, b) -> Double.compare(a.score, b.score));
         return candidates;
+    }
+
+    /** Whether a living entity passes the target filters, before range or FOV are checked. */
+    private boolean canTarget(EntityLivingBase living) {
+        if (mc.thePlayer == null || living == null || living == mc.thePlayer
+                || living.isDead || !living.isEntityAlive()) {
+            return false;
+        }
+        if (living.isInvisible() && !invisiblesSetting.getValue()) return false;
+
+        if (living instanceof EntityPlayer) {
+            EntityPlayer player = (EntityPlayer) living;
+            if (player.isSpectator()) return false;
+            if (!playersSetting.getValue()) return false;
+            if (!teammatesSetting.getValue() && mc.thePlayer.isOnSameTeam(player)) return false;
+        } else {
+            boolean hostile = living instanceof IMob || living instanceof EntityIronGolem;
+            if (hostile ? !hostileSetting.getValue() : !passiveSetting.getValue()) return false;
+        }
+        return !AntiBot.isBot(living);
+    }
+
+    /** Target ordering: OpenAdjust's Smart/Damage/Health/Distance priority options. */
+    private double scoreTarget(EntityLivingBase target, double distance) {
+        String priority = prioritySetting.getValue();
+        double distanceSq = distance * distance;
+        if (PRIORITY_DISTANCE.equals(priority)) return distanceSq;
+
+        double health = target.getHealth() + target.getAbsorptionAmount();
+        if (PRIORITY_HEALTH.equals(priority)) return health * 100.0D;
+
+        double damage = estimatedDamage(target);
+        if (PRIORITY_DAMAGE.equals(priority)) {
+            return health + (10000.0D - damage) * 1000.0D;
+        }
+        return health + (100.0D - damage) + distanceSq / 1000.0D;
+    }
+
+    /** A cheap damage estimate, following the base weapon and armour steps OpenAdjust uses. */
+    private double estimatedDamage(EntityLivingBase target) {
+        if (mc.thePlayer == null) return 0.0D;
+        double damage = 1.0D;
+        if (mc.thePlayer.getEntityAttribute(SharedMonsterAttributes.attackDamage) != null) {
+            damage = mc.thePlayer.getEntityAttribute(SharedMonsterAttributes.attackDamage)
+                    .getAttributeValue();
+        }
+        ItemStack weapon = mc.thePlayer.getHeldItem();
+        if (weapon != null) {
+            for (AttributeModifier modifier : weapon.getAttributeModifiers()
+                    .get("generic.attackDamage")) {
+                damage += modifier.getAmount();
+            }
+        }
+        damage *= (25.0D - Math.min(20, target.getTotalArmorValue())) / 25.0D;
+        return Math.max(0.0D, damage);
     }
 
     /**
@@ -627,13 +697,21 @@ public class KillAura extends Module {
     private void updateTargets(List<TargetCandidate> candidates) {
         int limit = targetsLimit();
         List<EntityLivingBase> next = new ArrayList<>(limit);
-        for (EntityLivingBase previous : targets) {
-            if (next.size() >= limit) break;
-            if (isCandidate(candidates, previous)) next.add(previous);
-        }
-        for (TargetCandidate candidate : candidates) {
-            if (next.size() >= limit) break;
-            if (!next.contains(candidate.entity)) next.add(candidate.entity);
+        if (limit == 1) {
+            // With a single slot there is no cycle to keep, so priority always chooses the
+            // current best instead of leaving the old target engaged forever.
+            next.add(candidates.get(0).entity);
+        } else {
+            // The multi-target cycle keeps engaged targets so a hit can move to the next one;
+            // priority order decides which new candidates fill the remaining slots.
+            for (EntityLivingBase previous : targets) {
+                if (next.size() >= limit) break;
+                if (isCandidate(candidates, previous)) next.add(previous);
+            }
+            for (TargetCandidate candidate : candidates) {
+                if (next.size() >= limit) break;
+                if (!next.contains(candidate.entity)) next.add(candidate.entity);
+            }
         }
 
         targets.clear();
@@ -662,7 +740,7 @@ public class KillAura extends Module {
     /**
      * Chooses this tick's aim. Silent rotations keep a rotation of their own, so the target is
      * handed to the smoother, which eases the real aim to it at frame rate and is sampled here
-     * for the packet. Normal rotations are the camera, so the target is stored and the view is
+     * for the packet. Lock View rotations are the camera, so the target is stored and the view is
      * eased toward it every frame from wherever the mouse has left it.
      */
     private void aimAt(EntityLivingBase target) {
@@ -723,7 +801,7 @@ public class KillAura extends Module {
     }
 
     /**
-     * Starts easing a silent aim back to the camera. On Normal rotations the aim already is the
+     * Starts easing a silent aim back to the camera. On Lock View rotations the aim already is the
      * camera, so there is nothing to unwind and the view simply stays where the player left it.
      */
     private void beginReturn() {
@@ -783,7 +861,7 @@ public class KillAura extends Module {
 
     private String rotationMode() {
         String mode = rotationSetting.getValue();
-        return mode == null ? ROTATION_NORMAL : mode;
+        return mode == null ? ROTATION_LOCK_VIEW : mode;
     }
 
     private boolean isSilentRotations() {
@@ -855,21 +933,11 @@ public class KillAura extends Module {
     private boolean attack(EntityLivingBase target) {
         if (mc.playerController == null || !target.isEntityAlive()) return false;
 
-        boolean alert = isAlertDistance();
-        double distance = alert ? hitDistance(target) : 0.0D;
-        float healthBefore = target.getHealth();
         // The rotation this hit relies on is the one the previous tick's movement packet
         // carried; canAttack only fires when that ray already reaches the box.
         mc.thePlayer.swingItem();
         mc.playerController.attackEntity(mc.thePlayer, target);
         ClickState.markAttack(mc.thePlayer.ticksExisted);
-        // Only a hit that actually took health counts: a click inside the target's hurt
-        // immunity window sends the packet but lands no damage, and alerting on those
-        // made the message fire several times per real hit.
-        if (alert && target.getHealth() < healthBefore) {
-            CommandManager.sendMessage("\u00a77KillAura \u00a7fAlert Distance: \u00a7a"
-                    + String.format(Locale.ROOT, "%.2f", distance) + " \u00a77blocks");
-        }
         return true;
     }
 
