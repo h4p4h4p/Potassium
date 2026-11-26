@@ -314,10 +314,12 @@ public class ConfigManager {
         migrateAntiKnockbackScale(values, "AntiKnockback.Horizontal");
         migrateAntiKnockbackScale(values, "AntiKnockback.Vertical");
         migrateScaffoldTower(values);
-        // KillAura and LeftClicker dropped Jitter for a CPS range; a single CPS becomes a
-        // range whose ends meet, which is the old no-jitter behaviour.
+        // KillAura and LeftClicker use a CPS range instead of a single number; RightClicker's
+        // CPS control is now the same two-handle slider. A single CPS becomes a range whose
+        // ends meet, which preserves its old fixed value.
         migrateSingleToRange(values, "KillAura.CPS");
         migrateSingleToRange(values, "LeftClicker.CPS");
+        migrateSingleToRange(values, "RightClicker.CPS");
         // Scaffold's Place Delay became a tick range; the old single value was a fixed delay.
         String oldPlaceDelay = values.get("Scaffold.Place Delay");
         if (oldPlaceDelay != null && !values.containsKey("Scaffold.Delay")) {

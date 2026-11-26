@@ -1,5 +1,6 @@
 package com.potassium.module;
 
+import com.potassium.settings.RangeSetting;
 import com.potassium.settings.SliderSetting;
 import com.potassium.util.ClickState;
 import net.minecraft.client.Minecraft;
@@ -13,7 +14,7 @@ import org.lwjgl.input.Mouse;
 public class RightClicker extends Module {
 
     private final SliderSetting delaySetting = new SliderSetting("Delay", 100, 0, 1000, 10);
-    private final SliderSetting cpsSetting = new SliderSetting("CPS", 12, 1, 20, 1);
+    private final RangeSetting cpsSetting = new RangeSetting("CPS", 12, 12, 1, 20, 1);
     private final SliderSetting randomSetting = new SliderSetting("Randomization", 0, 0, 100, 5);
 
     private final Minecraft mc = Minecraft.getMinecraft();
@@ -65,7 +66,7 @@ public class RightClicker extends Module {
     }
 
     private double nextInterval() {
-        double base = 1000.0 / cpsSetting.getValue();
+        double base = 1000.0 / cpsSetting.random();
         double jitter = (Math.random() * 2.0 - 1.0) * (randomSetting.getValue() / 100.0);
         double interval = base * (1.0 + jitter);
         // Never let negative randomization push the interval below the 20 CPS ceiling.
@@ -104,7 +105,9 @@ public class RightClicker extends Module {
 
     @Override
     public String getTag() {
-        return Math.round(cpsSetting.getValue()) + " CPS";
+        long low = Math.round(cpsSetting.getLow());
+        long high = Math.round(cpsSetting.getHigh());
+        return low == high ? low + " CPS" : low + "-" + high + " CPS";
     }
 
     @Override
