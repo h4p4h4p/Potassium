@@ -24,7 +24,7 @@ import net.minecraftforge.fml.common.gameevent.TickEvent;
  * soul sand are still corrected after movement because vanilla applies those directly to
  * motion.
  */
-public class NoSlow extends Module {
+public class NoSlowdown extends Module {
 
     private final BooleanSetting itemsSetting = new BooleanSetting("Items", true);
     private final BooleanSetting websSetting = new BooleanSetting("Webs", true);
@@ -32,8 +32,8 @@ public class NoSlow extends Module {
 
     private final Minecraft mc = Minecraft.getMinecraft();
 
-    public NoSlow() {
-        super("NoSlow", Category.MOVEMENT);
+    public NoSlowdown() {
+        super("NoSlowdown", Category.MOVEMENT);
         settings.add(itemsSetting);
         settings.add(websSetting);
         settings.add(soulSandSetting);
@@ -49,17 +49,17 @@ public class NoSlow extends Module {
             // EntityPlayerSP applies its item-use slowdown after updatePlayerMoveState,
             // so installing the wrapper now gives the wrapper a chance to pre-scale it.
             if (isEnabled() && itemsSetting.getValue() && player instanceof EntityPlayerSP) {
-                MovementInputStack.install("NoSlow", MovementInputStack.PRIORITY_NO_SLOW,
-                        inner -> new NoSlowMovementInput(inner, this));
+                MovementInputStack.install("NoSlowdown", MovementInputStack.PRIORITY_NO_SLOW,
+                        inner -> new NoSlowdownMovementInput(inner, this));
             }
             return;
         }
 
         // The pre-scale is only needed for the player update, so nothing stays wrapped.
-        MovementInputStack.uninstall("NoSlow");
+        MovementInputStack.uninstall("NoSlowdown");
         if (!isEnabled()) return;
 
-        // Items are handled by NoSlowMovementInput. Correcting motion here would
+        // Items are handled by NoSlowdownMovementInput. Correcting motion here would
         // multiply the previous tick's correction again and make speed grow without bound.
         if (websSetting.getValue() && isInWeb(player)) {
             player.motionX *= 4.0D;
@@ -111,14 +111,14 @@ public class NoSlow extends Module {
     /**
      * Pre-scales the raw key input so vanilla's item-use multiplier cancels out exactly.
      * Leaving the wrapper installed is harmless: it delegates all state updates to
-     * MovementInputFromOptions and only applies the correction while NoSlow is enabled.
+     * MovementInputFromOptions and only applies the correction while NoSlowdown is enabled.
      */
-    private static final class NoSlowMovementInput extends MovementInput {
+    private static final class NoSlowdownMovementInput extends MovementInput {
 
         private final MovementInput delegate;
-        private final NoSlow module;
+        private final NoSlowdown module;
 
-        private NoSlowMovementInput(MovementInput delegate, NoSlow module) {
+        private NoSlowdownMovementInput(MovementInput delegate, NoSlowdown module) {
             this.delegate = delegate;
             this.module = module;
         }

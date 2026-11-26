@@ -28,7 +28,7 @@ public final class MovementInputStack {
 
     /** Silent key rotation, closest to vanilla so later scaling still applies to it. */
     public static final int PRIORITY_MOVEMENT_FIX = 100;
-    /** NoSlow's item-use pre-scale, above the rotation. */
+    /** NoSlowdown's item-use pre-scale, above the rotation. */
     public static final int PRIORITY_NO_SLOW = 200;
     /** Scaffold's sneak speed, outermost: the final walk speed is the configured one. */
     public static final int PRIORITY_SNEAK_SPEED = 300;

@@ -1265,7 +1265,7 @@ public class Scaffold extends Module {
      * key. Vanilla applies that multiplier inside the movement input itself, so the input is
      * wrapped for the tick: the delegate samples the keys as usual, and the wrapper divides
      * the 0.3 back out and applies the configured fraction. 1 walks at full speed, 0.2 barely
-     * creeps. Like NoSlow's wrapper, the delegate is kept so another module's input survives.
+     * creeps. Like NoSlowdown's wrapper, the delegate is kept so another module's input survives.
      */
     private void installSneakSpeedInput(EntityPlayerSP player) {
         MovementInputStack.install("Scaffold", MovementInputStack.PRIORITY_SNEAK_SPEED,

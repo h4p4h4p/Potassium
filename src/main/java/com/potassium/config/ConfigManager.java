@@ -227,6 +227,7 @@ public class ConfigManager {
         // Renamed modules keep their old settings and binds.
         migrateRenamedModule(values, "Sprint", "AutoSprint");
         migrateRenamedModule(values, "Internet", "Blink");
+        migrateRenamedModule(values, "NoSlow", "NoSlowdown");
         // The Interface module became GUI, then HUD. Both old prefixes still populate the
         // HUD settings; GUI wins if a config happens to contain both.
         migrateRenamedModule(values, "GUI", "HUD");

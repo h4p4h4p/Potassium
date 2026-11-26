@@ -321,7 +321,7 @@ public final class SilentLook {
      */
     /**
      * Registers the Silent key rotation on the shared movement-input stack. The stack rebuilds
-     * the chain in priority order, so NoSlow's pre-scale and Scaffold's sneak scaling compose
+     * the chain in priority order, so NoSlowdown's pre-scale and Scaffold's sneak scaling compose
      * the same way regardless of which module installed its layer first.
      */
     private static void wrapInput() {

@@ -164,7 +164,7 @@ public class Freecam extends Module {
 
     /**
      * Freezes the body for the tick that moves and reports it. The layer is installed before
-     * vanilla samples the keys and removed once the tick is over, the way NoSlow does, so it
+     * vanilla samples the keys and removed once the tick is over, the way NoSlowdown does, so it
      * never lingers on the stack.
      */
     @SubscribeEvent

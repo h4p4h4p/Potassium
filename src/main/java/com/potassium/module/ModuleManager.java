@@ -13,7 +13,7 @@ public class ModuleManager {
         modules.add(new Disabler());
         modules.add(new AutoSprint());
         modules.add(new MoreKB());
-        modules.add(new NoSlow());
+        modules.add(new NoSlowdown());
         modules.add(new Scaffold());
         modules.add(new FastBreak());
         modules.add(new Blink());
