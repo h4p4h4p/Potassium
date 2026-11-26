@@ -31,8 +31,6 @@ import net.minecraftforge.fml.common.eventhandler.EventPriority;
 import net.minecraftforge.fml.common.eventhandler.SubscribeEvent;
 import net.minecraftforge.fml.common.gameevent.TickEvent;
 import net.minecraftforge.fml.relauncher.ReflectionHelper;
-import org.apache.logging.log4j.LogManager;
-import org.apache.logging.log4j.Logger;
 import org.lwjgl.input.Keyboard;
 
 import java.lang.reflect.Field;
@@ -54,8 +52,6 @@ import java.util.Set;
  * tick's own look does. The camera itself never moves.
  */
 public class Scaffold extends Module {
-
-    private static final Logger LOGGER = LogManager.getLogger("Potassium");
 
     public static final String MODE_NORMAL = "Normal";
     public static final String MODE_LEGIT = "Legit";
@@ -223,9 +219,6 @@ public class Scaffold extends Module {
     private boolean sneakKeyForced;
     private boolean legitSneaking;
     private int legitReleaseTicks;
-    // TEMPORARY diagnostics: throttled reason for the last skipped placement.
-    private String lastSkipReason;
-    private int lastSkipLogTick = -100;
     private int placementsSinceEnable;
 
     public Scaffold() {
@@ -408,29 +401,19 @@ public class Scaffold extends Module {
             // released once Stop Sneaking has passed since the last one.
             updateSneakControl(player, base);
         }
-        if (!isReplaceable(base)) {
-            skip(player, "base cell solid " + base);
-            return;
-        }
+        if (!isReplaceable(base)) return;
         // The server refuses a block in a cell the player's own box still covers and the
         // client is left with a ghost. That is what a tower looked like while it started.
         if (player.getEntityBoundingBox().intersectsWith(new AxisAlignedBB(
                 base.getX(), base.getY(), base.getZ(),
                 base.getX() + 1.0D, base.getY() + 1.0D, base.getZ() + 1.0D))) {
-            skip(player, "base cell inside player " + base);
             return;
         }
 
-        if (!ensureBlock(player)) {
-            skip(player, "no placeable block in hand");
-            return;
-        }
+        if (!ensureBlock(player)) return;
 
         Placement placement = findPlacement(player, base);
-        if (placement == null) {
-            skip(player, "no reachable face on " + base);
-            return;
-        }
+        if (placement == null) return;
 
         // The aim turns toward the face on every tick it has a target, not only on the ticks
         // that end in a placement. Smoothing is a run of small moves spread over ticks, so
@@ -438,24 +421,15 @@ public class Scaffold extends Module {
         // curve exists to avoid; the server keeps seeing the view move the way a hand moves it.
         boolean aimArrived = turnAim(player, placement);
 
-        if (!ClickState.canUse(tick)) {
-            skip(player, "attack this tick");
-            return;
-        }
+        if (!ClickState.canUse(tick)) return;
         if (normalPlacementTick == tick) return;
         if (tick - lastPlaceTick < placementDelay()) return;
-        if (!aimArrived) {
-            skip(player, "aim still turning");
-            return;
-        }
+        if (!aimArrived) return;
         // The click packet leaves before this tick's look reaches the server, so the
         // interaction is checked against the rotation the server already has. Placing while
         // that rotation is not on the face is what NCP's direction checks cancel, and a
         // cancelled placement leaves the client standing on a block the server never got.
-        if (!serverAimReaches(player, placement)) {
-            skip(player, "server aim not on face");
-            return;
-        }
+        if (!serverAimReaches(player, placement)) return;
 
         place(player, placement, tick);
     }
@@ -477,8 +451,6 @@ public class Scaffold extends Module {
             lastPlaceTick = tick;
             placementsSinceEnable++;
             onSneakPlacement();
-        } else {
-            skip(player, "controller rejected " + placement.position + " " + placement.side);
         }
     }
 
@@ -1322,17 +1294,6 @@ public class Scaffold extends Module {
         } else if (fraction < 0.1D && !player.onGround) {
             player.setPosition(player.posX, Math.floor(player.posY), player.posZ);
         }
-    }
-
-    /** TEMPORARY: one throttled log line per skip reason, for diagnosing a placement. */
-    private void skip(EntityPlayerSP player, String reason) {
-        int tick = player.ticksExisted;
-        if (reason.equals(lastSkipReason) && tick - lastSkipLogTick < 20) return;
-        lastSkipReason = reason;
-        lastSkipLogTick = tick;
-        LOGGER.info("[Scaffold] skip: {} pos={}/{}/{} yaw={} pitch={} onGround={} motionY={}",
-                reason, player.posX, player.posY, player.posZ,
-                player.rotationYaw, player.rotationPitch, player.onGround, player.motionY);
     }
 
     /** A random wait inside the Delay range, in ticks, like LB's integer range. */

@@ -10,8 +10,6 @@ import net.minecraftforge.common.MinecraftForge;
 import net.minecraftforge.fml.common.eventhandler.SubscribeEvent;
 import net.minecraftforge.fml.common.gameevent.TickEvent;
 import net.minecraftforge.fml.relauncher.ReflectionHelper;
-import org.apache.logging.log4j.LogManager;
-import org.apache.logging.log4j.Logger;
 
 import java.lang.reflect.Field;
 
@@ -42,8 +40,6 @@ public class FastBreak extends Module {
     public static final String MODE_LEGIT = "Legit";
     public static final String MODE_DAMAGE = "Damage";
     public static final String MODE_TICK = "Tick";
-
-    private static final Logger LOGGER = LogManager.getLogger("Potassium");
 
     /** Leave the last sliver to vanilla so the break is still completed by its own code. */
     private static final float MAX_ACCUMULATOR = 0.99F;
@@ -152,10 +148,9 @@ public class FastBreak extends Module {
             hitDelayField = hitDelay;
             damageField = damage;
             return true;
-        } catch (Exception e) {
-            // Retrying every tick would only repeat the failure, so give up and say why.
+        } catch (Exception ignored) {
+            // Retrying every tick would only repeat the failure, so give up.
             fieldsUnavailable = true;
-            LOGGER.warn("FastBreak could not access PlayerControllerMP fields; module is inactive", e);
             return false;
         }
     }

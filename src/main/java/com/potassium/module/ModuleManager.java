@@ -21,7 +21,6 @@ public class ModuleManager {
         modules.add(new AimAssist());
         modules.add(new HitSelect());
         modules.add(new KillAura());
-        modules.add(new Diagnostics());
         modules.add(new TargetStrafe());
         modules.add(new LeftClicker());
         modules.add(new AntiBot());

@@ -197,7 +197,6 @@ public class LeftClicker extends Module {
             mc.thePlayer.swingItem();
             mc.playerController.attackEntity(mc.thePlayer, over.entityHit);
             ClickState.markAttack(tick);
-            Diagnostics.noteAttack();
         }
 
         // Re-block on the next tick instead of sending use and attack together.
@@ -226,7 +225,6 @@ public class LeftClicker extends Module {
             mc.thePlayer.swingItem();
             mc.playerController.attackEntity(mc.thePlayer, over.entityHit);
             ClickState.markAttack(tick);
-            Diagnostics.noteAttack();
         } else {
             mc.thePlayer.swingItem();
             if (over != null && over.typeOfHit == MovingObjectPosition.MovingObjectType.BLOCK) {
@@ -245,7 +243,6 @@ public class LeftClicker extends Module {
         mc.thePlayer.swingItem();
         mc.playerController.attackEntity(mc.thePlayer, target);
         ClickState.markAttack(mc.thePlayer.ticksExisted);
-        Diagnostics.noteAttack();
     }
 
     private void reset() {

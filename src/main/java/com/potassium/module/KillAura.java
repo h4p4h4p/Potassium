@@ -1205,7 +1205,6 @@ public class KillAura extends Module {
         mc.thePlayer.swingItem();
         mc.playerController.attackEntity(mc.thePlayer, target);
         ClickState.markAttack(mc.thePlayer.ticksExisted);
-        Diagnostics.noteAttack();
         return true;
     }
 
