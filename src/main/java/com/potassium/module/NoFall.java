@@ -46,7 +46,7 @@ public class NoFall extends Module {
     private GroundHandler handler;
 
     public NoFall() {
-        super("NoFall", Category.MOVEMENT);
+        super("NoFall", Category.PLAYER);
         settings.add(modeSetting);
         settings.add(fallDistanceSetting);
         MinecraftForge.EVENT_BUS.register(this);

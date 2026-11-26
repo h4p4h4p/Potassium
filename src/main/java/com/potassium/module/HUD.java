@@ -42,7 +42,7 @@ public class HUD extends Module {
     private final SliderSetting bgDimSetting = new SliderSetting("BG Dim", 60, 0, 100, 5);
 
     public HUD() {
-        super("HUD", Category.CLIENT);
+        super("HUD", Category.RENDER);
         settings.add(watermarkSetting);
         settings.add(watermarkTextSetting);
         settings.add(moduleListSetting);

@@ -78,7 +78,7 @@ public class FakeLag extends Module {
     private float lastAbsorption = -1.0F;
 
     public FakeLag() {
-        super("FakeLag", Category.MOVEMENT);
+        super("FakeLag", Category.EXPLOITS);
         settings.add(delaySetting);
         settings.add(serverPositionSetting);
         settings.add(disableOnHurtSetting);

@@ -48,7 +48,7 @@ public class Blink extends Module {
     private double anchorZ;
 
     public Blink() {
-        super("Blink", Category.MOVEMENT);
+        super("Blink", Category.PLAYER);
         settings.add(modeSetting);
         settings.add(pulseDirectionSetting);
         settings.add(pulseDelaySetting);

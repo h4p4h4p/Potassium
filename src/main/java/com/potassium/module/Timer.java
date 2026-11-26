@@ -23,7 +23,7 @@ public class Timer extends Module {
     private net.minecraft.util.Timer clientTimer;
 
     public Timer() {
-        super("Timer", Category.MOVEMENT);
+        super("Timer", Category.PLAYER);
         settings.add(speedSetting);
         MinecraftForge.EVENT_BUS.register(this);
     }

@@ -39,7 +39,7 @@ public class Disabler extends Module {
     private Channel boundChannel;
 
     public Disabler() {
-        super("Disabler", Category.MOVEMENT);
+        super("Disabler", Category.EXPLOITS);
         settings.add(noSprintPacketSetting);
         MinecraftForge.EVENT_BUS.register(this);
     }

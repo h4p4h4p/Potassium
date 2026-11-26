@@ -229,7 +229,7 @@ public class Scaffold extends Module {
     private int placementsSinceEnable;
 
     public Scaffold() {
-        super("Scaffold", Category.WORLD);
+        super("Scaffold", Category.MOVEMENT);
         rotationSetting.setGroup(ROTATION_SMOOTHING_GROUP);
         smoothingSetting.setGroup(ROTATION_SMOOTHING_GROUP);
         yawSpeedSetting.setGroup(ROTATION_SMOOTHING_GROUP);

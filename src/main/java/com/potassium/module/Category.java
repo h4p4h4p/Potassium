@@ -3,11 +3,10 @@ package com.potassium.module;
 public enum Category {
 
     COMBAT("Combat"),
+    EXPLOITS("Exploits"),
     MOVEMENT("Movement"),
     PLAYER("Player"),
-    WORLD("World"),
-    RENDER("Render"),
-    CLIENT("Client");
+    RENDER("Render");
 
     private final String name;
 
