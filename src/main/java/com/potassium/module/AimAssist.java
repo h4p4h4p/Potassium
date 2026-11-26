@@ -4,6 +4,7 @@ import com.potassium.Potassium;
 import com.potassium.settings.BooleanSetting;
 import com.potassium.settings.SliderSetting;
 import com.potassium.util.Friends;
+import com.potassium.util.RotationUtil;
 import net.minecraft.client.Minecraft;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.EntityLivingBase;
@@ -15,6 +16,8 @@ import net.minecraft.util.Vec3;
 import net.minecraftforge.client.event.RenderWorldLastEvent;
 import net.minecraftforge.common.MinecraftForge;
 import net.minecraftforge.fml.common.eventhandler.SubscribeEvent;
+
+import java.util.Random;
 
 /**
  * Nudges the camera toward the living entity nearest the crosshair.
@@ -44,6 +47,7 @@ public class AimAssist extends Module {
     private final BooleanSetting wallCheckSetting = new BooleanSetting("Wall Check", true);
 
     private final Minecraft mc = Minecraft.getMinecraft();
+    private final Random random = new Random();
     private Module killAura;
 
     public AimAssist() {
@@ -120,13 +124,33 @@ public class AimAssist extends Module {
 
         if (!found) return;
 
-        double sensitivity = sensitivitySetting.getValue();
-        float yawFactor = (float) (xSmoothSetting.getValue() / 100.0D * sensitivity);
-        float pitchFactor = (float) (ySmoothSetting.getValue() / 100.0D * sensitivity);
+        float yawDelta = wrapDegrees(targetYaw - curYaw);
+        float pitchDelta = targetPitch - curPitch;
+        // Aiming at a point already inside the hitbox should not keep producing tiny look
+        // updates every frame. That stream of sub-degree corrections is what constant-rotation
+        // checks look for; leave the view alone until it is actually off the point.
+        if (Math.abs(yawDelta) < 0.2F && Math.abs(pitchDelta) < 0.2F) return;
 
-        mc.thePlayer.rotationYaw = curYaw + wrapDegrees(targetYaw - curYaw) * yawFactor;
-        mc.thePlayer.rotationPitch = MathHelper.clamp_float(
-                curPitch + (targetPitch - curPitch) * pitchFactor, -90.0F, 90.0F);
+        double sensitivity = sensitivitySetting.getValue();
+        // A fixed 30% step every frame produces the same exponential curve and the same
+        // fractional deltas over and over. Vary the step a little per frame, per axis, so the
+        // turn is not a constant ratio, while keeping the configured smoothness as its centre.
+        double yawFactor = Math.min(1.0D, xSmoothSetting.getValue() / 100.0D * sensitivity
+                * (0.82D + random.nextDouble() * 0.36D));
+        double pitchFactor = Math.min(1.0D, ySmoothSetting.getValue() / 100.0D * sensitivity
+                * (0.82D + random.nextDouble() * 0.36D));
+
+        float desiredYaw = curYaw + yawDelta * (float) yawFactor;
+        float desiredPitch = MathHelper.clamp_float(
+                curPitch + pitchDelta * (float) pitchFactor, -90.0F, 90.0F);
+
+        // MX's Aim (Constant) check takes the GCD of two consecutive look deltas. Fractional
+        // aim angles give a tiny GCD and flag; a real mouse always moves in whole steps of the
+        // current sensitivity. Round the correction onto that same grid, measured from the
+        // rotation already on screen, so every delta the server sees is a whole mouse count.
+        float[] snapped = RotationUtil.snapToMouse(desiredYaw, desiredPitch, curYaw, curPitch);
+        mc.thePlayer.rotationYaw = snapped[0];
+        mc.thePlayer.rotationPitch = snapped[1];
     }
 
     private boolean canTarget(EntityLivingBase living) {
