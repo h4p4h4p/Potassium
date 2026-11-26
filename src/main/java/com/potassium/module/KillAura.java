@@ -30,6 +30,7 @@ import net.minecraft.util.MovingObjectPosition;
 import net.minecraft.util.Vec3;
 import net.minecraftforge.client.event.RenderWorldLastEvent;
 import net.minecraftforge.common.MinecraftForge;
+import net.minecraftforge.event.entity.player.PlayerInteractEvent;
 import net.minecraftforge.fml.common.eventhandler.EventPriority;
 import net.minecraftforge.fml.common.eventhandler.SubscribeEvent;
 import net.minecraftforge.fml.common.gameevent.TickEvent;
@@ -123,6 +124,10 @@ public class KillAura extends Module {
     /** True while the use key is held down only because On Mouse Down is off. */
     private boolean spoofingUseKey;
     private int spoofedUseKeyCode;
+    /** Client tick of the last C08, so one tick cannot send two block interactions. */
+    private int lastBlockPacketTick = -1;
+    /** Tick on which a block released for an attack may be started again. */
+    private int restartAutoBlockTick = -1;
 
     public KillAura() {
         super("KillAura", Category.COMBAT);
@@ -216,7 +221,12 @@ public class KillAura extends Module {
         if (attackNow) {
             // Packet modes deliberately keep the server-side block through the hit; every
             // other mode releases it so the client attack matches the packet it sends.
-            if (autoBlockActive && !isPacketMode(autoBlockMode)) stopAutoBlock();
+            if (autoBlockActive && !isPacketMode(autoBlockMode)) {
+                stopAutoBlock();
+                // Keep the C07 release and the C08 restart out of the same tick. A block
+                // interaction rate check treats a release plus a new use as two actions.
+                restartAutoBlockTick = mc.thePlayer.ticksExisted + 1;
+            }
             if (attack(current)) advanceTarget();
         }
         maintainAutoBlock();
@@ -283,6 +293,10 @@ public class KillAura extends Module {
         if (!blockingEnabled() || !autoBlockWanted()) {
             stopAutoBlock();
             return;
+        }
+        if (restartAutoBlockTick >= 0) {
+            if (restartAutoBlockTick > mc.thePlayer.ticksExisted) return;
+            restartAutoBlockTick = -1;
         }
 
         if (autoBlockActive && (!mode.equals(autoBlockMode)
@@ -369,10 +383,12 @@ public class KillAura extends Module {
         autoBlockActive = true;
         autoBlockMode = mode;
         autoBlockStack = held;
+        restartAutoBlockTick = -1;
     }
 
     private void stopAutoBlock() {
         if (!autoBlockActive) {
+            restartAutoBlockTick = -1;
             releaseUseKey();
             return;
         }
@@ -390,6 +406,7 @@ public class KillAura extends Module {
         }
         if (!BLOCK_FAKE.equals(mode)) sendReleasePacket();
         releaseUseKey();
+        restartAutoBlockTick = -1;
     }
 
     /**
@@ -411,6 +428,22 @@ public class KillAura extends Module {
         spoofedUseKeyCode = keyCode;
     }
 
+    /**
+     * The synthetic use key is held, not clicked. If vanilla's held-right-click path runs
+     * anyway, cancellable right-click interactions stop it from sending a second C08.
+     */
+    @SubscribeEvent(priority = EventPriority.HIGHEST)
+    public void onPlayerInteract(PlayerInteractEvent event) {
+        // The integrated server fires this too; only cancel the local client's synthetic
+        // right-click, never the server's processing of the C08 we sent on purpose.
+        if (event.entityPlayer != mc.thePlayer) return;
+        if (!autoBlockActive || !spoofingUseKey) return;
+        if (event.action == PlayerInteractEvent.Action.RIGHT_CLICK_AIR
+                || event.action == PlayerInteractEvent.Action.RIGHT_CLICK_BLOCK) {
+            event.setCanceled(true);
+        }
+    }
+
     private void releaseUseKey() {
         if (!spoofingUseKey) return;
         spoofingUseKey = false;
@@ -430,9 +463,11 @@ public class KillAura extends Module {
     }
 
     private void sendBlockPacket(ItemStack stack) {
-        if (mc.getNetHandler() != null) {
-            mc.getNetHandler().addToSendQueue(new C08PacketPlayerBlockPlacement(stack));
-        }
+        if (mc.getNetHandler() == null || mc.thePlayer == null) return;
+        int tick = mc.thePlayer.ticksExisted;
+        if (tick == lastBlockPacketTick) return;
+        lastBlockPacketTick = tick;
+        mc.getNetHandler().addToSendQueue(new C08PacketPlayerBlockPlacement(stack));
     }
 
     private void sendReleasePacket() {
