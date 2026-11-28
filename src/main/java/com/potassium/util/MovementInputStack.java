@@ -30,6 +30,8 @@ public final class MovementInputStack {
     public static final int PRIORITY_MOVEMENT_FIX = 100;
     /** NoSlowdown's item-use pre-scale, above the rotation. */
     public static final int PRIORITY_NO_SLOW = 200;
+    /** Speed's NCP mode, which owns the motion and zeroes vanilla's input for the tick. */
+    public static final int PRIORITY_SPEED = 250;
     /** Scaffold's sneak speed, outermost: the final walk speed is the configured one. */
     public static final int PRIORITY_SNEAK_SPEED = 300;
     /** Freecam's frozen input, above everything: no key may reach the body while it flies. */

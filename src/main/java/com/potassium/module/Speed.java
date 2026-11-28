@@ -11,11 +11,29 @@ import net.minecraft.entity.player.EntityPlayer;
 import net.minecraft.potion.Potion;
 import net.minecraft.potion.PotionEffect;
 import net.minecraft.util.AxisAlignedBB;
-import net.minecraft.util.Timer;
+import com.potassium.util.MovementInputStack;
+import com.potassium.util.SilentLook;
+import io.netty.channel.Channel;
+import io.netty.channel.ChannelHandler;
+import io.netty.channel.ChannelHandlerContext;
+import io.netty.channel.ChannelInboundHandlerAdapter;
+import net.minecraft.block.Block;
+import net.minecraft.block.BlockCarpet;
+import net.minecraft.block.BlockFence;
+import net.minecraft.block.BlockFenceGate;
+import net.minecraft.block.BlockSlab;
+import net.minecraft.block.BlockStairs;
+import net.minecraft.block.state.IBlockState;
+import net.minecraft.init.Blocks;
+import net.minecraft.network.Packet;
+import net.minecraft.network.play.server.S08PacketPlayerPosLook;
+import net.minecraft.network.play.server.S12PacketEntityVelocity;
+import net.minecraft.util.BlockPos;
+import net.minecraft.util.MovementInput;
 import net.minecraftforge.common.MinecraftForge;
 import net.minecraftforge.fml.common.eventhandler.SubscribeEvent;
-import net.minecraftforge.fml.relauncher.ReflectionHelper;
 import net.minecraftforge.fml.common.gameevent.TickEvent;
+import net.minecraftforge.fml.common.network.FMLNetworkEvent;
 
 public class Speed extends Module {
 
@@ -28,39 +46,33 @@ public class Speed extends Module {
     // Same ground speed Normal starts from, so the default multiplier lands around 0.33.
     private static final double LOW_HOP_BASE_SPEED = 0.28D;
 
-    // LiquidBounce NCP constants.
-    private static final double NCP_GROUND_SPEED = 0.281D;
-    private static final double NCP_AIR_SPEED = 0.2D;
-    private static final double NCP_SPEED_EFFECT = 0.199999999D;
-    private static final double NCP_AIR_STRAFE_STRENGTH = 0.7D;
-    private static final double NCP_BOOST = 0.00718D;
-    private static final double NCP_PULL_DOWN = 0.1523351824467155D;
-    private static final double NCP_PULL_HURT = 0.1D;
-    private static final double NCP_DAMAGE_BOOST_SPEED = 0.5D;
-    private static final double NCP_LOW_HOP_MOTION = 0.4D;
-    private static final float NCP_TIMER_SPEED = 1.08F;
+    // OpenAdjust's NCP constants, from its NcpSpeedMode.
+    private static final double NCP_BASE_SPEED = 0.2873D;
+    private static final double NCP_BASE_POTION_STEP = 0.2D;
+    private static final double NCP_INITIAL_SPEED = 0.329014D;
+    private static final double NCP_INITIAL_POTION_FACTOR = 1.18D;
+    private static final double NCP_INITIAL_POTION_BACKOFF = 0.01D;
+    private static final double NCP_AIR_KEEP = 0.76D;
+    private static final double NCP_AIR_KEEP_FAST = 0.66D;
+    private static final double NCP_FRICTION_DIVISOR = 159.0D;
+    private static final double NCP_GROUND_BOOST = 1.6D;
+    private static final double NCP_CORRECTION_DIVISOR = 1.27D;
+    // Its damage boost reads the server's knockback; this is the fall limit it accepts.
+    private static final float NCP_DAMAGE_FALL_LIMIT = 2.5F;
 
     private final ModeSetting modeSetting = new ModeSetting("Mode",
             new String[]{MODE_NORMAL, MODE_LEGIT_HOP, MODE_LOW_HOP, MODE_NCP, MODE_VULCAN}, 0);
     private final SliderSetting speedSetting = new SliderSetting("Speed", 1.2, 0.5, 5.0, 0.05);
     private final BooleanSetting autoJumpSetting = new BooleanSetting("Auto Jump", true);
     private final BooleanSetting glideSetting = new BooleanSetting("Glide", false);
-    private final BooleanSetting ncpPullDownSetting = new BooleanSetting("Pull Down", true);
-    private final SliderSetting ncpPullMotionSetting = new SliderSetting("Motion Multiplier",
-            1.0, 0.01, 10.0, 0.01);
-    private final SliderSetting ncpPullTickSetting = new SliderSetting("On Tick",
-            5, 1, 9, 1);
-    private final BooleanSetting ncpPullOnHurtSetting = new BooleanSetting("On Hurt", true);
-    private final BooleanSetting ncpBoostSetting = new BooleanSetting("Boost", true);
-    private final SliderSetting ncpBoostMultiplierSetting = new SliderSetting("Initial Boost Multiplier",
-            1.0, 0.01, 10.0, 0.01);
-    private final BooleanSetting ncpTimerSetting = new BooleanSetting("Timer", true);
-    private final BooleanSetting ncpDamageBoostSetting = new BooleanSetting("Damage Boost", true);
-    private final BooleanSetting ncpLowHopSetting = new BooleanSetting("Low Hop", true);
-    private final BooleanSetting ncpAirStrafeSetting = new BooleanSetting("Air Strafe", true);
+    // The three settings its NcpSpeedMode exposes.
+    private final BooleanSetting ncpFastSetting = new BooleanSetting("Fast", false);
+    private final BooleanSetting ncpDamageBoostSetting = new BooleanSetting("Damage Boost", false);
+    private final SliderSetting ncpJumpTicksSetting = new SliderSetting("Jump Ticks", 10, 8, 11, 1);
 
     private final Minecraft mc = Minecraft.getMinecraft();
-    private Timer clientTimer;
+    private final NcpPacketHandler ncpHandler = new NcpPacketHandler();
+    private int ncpPlayerId = -1;
 
     // VerusHop-style speed: one acceleration on the ground, then decay in the air.
     // Re-strafing to full speed every airborne tick is what the speed checks see.
@@ -72,8 +84,20 @@ public class Speed extends Module {
     private int lowHopAirTicks;
     private boolean lowHopJumped;
 
-    private boolean timerApplied;
-    private int ncpAirTicks;
+    // NCP state, mirroring its NcpSpeedState.
+    private int ncpOffGroundTicks;
+    private double ncpLastDistance;
+    private double ncpSpeed;
+    private int ncpWaitTicks;
+    private int ncpJumpTicks = 10;
+    private boolean ncpDamaged;
+    private boolean ncpJumped;
+    private boolean ncpJumpRequested;
+    private boolean ncpLowHopPinned;
+    private volatile Double ncpPendingSpeed;
+    // Ticks since the server last corrected our position; its movementPredictor equivalent.
+    private volatile int ncpSinceCorrection;
+    private Channel ncpChannel;
 
     public Speed() {
         super("Speed", Category.MOVEMENT);
@@ -81,16 +105,9 @@ public class Speed extends Module {
         settings.add(speedSetting);
         settings.add(autoJumpSetting);
         settings.add(glideSetting);
-        settings.add(ncpPullDownSetting);
-        settings.add(ncpPullMotionSetting);
-        settings.add(ncpPullTickSetting);
-        settings.add(ncpPullOnHurtSetting);
-        settings.add(ncpBoostSetting);
-        settings.add(ncpBoostMultiplierSetting);
-        settings.add(ncpTimerSetting);
+        settings.add(ncpFastSetting);
         settings.add(ncpDamageBoostSetting);
-        settings.add(ncpLowHopSetting);
-        settings.add(ncpAirStrafeSetting);
+        settings.add(ncpJumpTicksSetting);
         MinecraftForge.EVENT_BUS.register(this);
     }
 
@@ -103,17 +120,9 @@ public class Speed extends Module {
             return !legitHop() && !lowHop() && !ncp() && !vulcan();
         }
         if (setting == glideSetting) return lowHop();
-        if (setting == ncpPullDownSetting || setting == ncpBoostSetting
-                || setting == ncpTimerSetting || setting == ncpDamageBoostSetting
-                || setting == ncpLowHopSetting || setting == ncpAirStrafeSetting) {
+        if (setting == ncpFastSetting || setting == ncpDamageBoostSetting
+                || setting == ncpJumpTicksSetting) {
             return ncp();
-        }
-        if (setting == ncpPullMotionSetting || setting == ncpPullTickSetting
-                || setting == ncpPullOnHurtSetting) {
-            return ncp() && ncpPullDownSetting.getValue();
-        }
-        if (setting == ncpBoostMultiplierSetting) {
-            return ncp() && ncpBoostSetting.getValue();
         }
         return super.isSettingVisible(setting);
     }
@@ -153,11 +162,10 @@ public class Speed extends Module {
         if (player == null || player != mc.thePlayer) return;
 
         if (!ncp()) {
-            resetTimer();
-            ncpAirTicks = 0;
+            resetNcp();
         }
         if (player.capabilities.isFlying || player.isInWater() || player.isInLava()) {
-            resetTimer();
+            resetNcp();
             return;
         }
 
@@ -205,62 +213,7 @@ public class Speed extends Module {
         }
 
         if (ncp()) {
-            boolean moving = PlayerUtil.isMoving(player);
-            PotionEffect speedEffect = player.getActivePotionEffect(Potion.moveSpeed);
-            int speedAmplifier = speedEffect == null ? 0 : speedEffect.getAmplifier();
-
-            if (player.onGround) {
-                ncpAirTicks = 0;
-            }
-
-            // LiquidBounce's NCP mode is a bhop: jump while moving and hold the
-            // ground minimum, then blend toward the air minimum while airborne.
-            if (moving && player.onGround) {
-                if (!vanillaJumps()) player.jump();
-                if (ncpLowHopSetting.getValue()) {
-                    player.motionY = NCP_LOW_HOP_MOTION;
-                }
-                double groundSpeed = NCP_GROUND_SPEED + NCP_SPEED_EFFECT * speedAmplifier;
-                ncpStrafe(player, Math.max(horizontalSpeed(player), groundSpeed), 1.0D);
-            } else if (moving && ncpAirStrafeSetting.getValue()) {
-                double airSpeed = NCP_AIR_SPEED + NCP_SPEED_EFFECT * speedAmplifier;
-                ncpStrafe(player, Math.max(horizontalSpeed(player), airSpeed),
-                        NCP_AIR_STRAFE_STRENGTH);
-            }
-
-            // NCP PullDown: one downward impulse per jump at the configured air tick.
-            if (ncpPullDownSetting.getValue() && !player.onGround) {
-                ncpAirTicks++;
-                if (ncpAirTicks == (int) ncpPullTickSetting.getValue()) {
-                    ncpStrafe(player, horizontalSpeed(player), 1.0D);
-                    player.motionY -= NCP_PULL_DOWN * ncpPullMotionSetting.getValue();
-                }
-                if (ncpPullOnHurtSetting.getValue() && player.hurtTime >= 5
-                        && player.motionY >= 0.0D) {
-                    player.motionY -= NCP_PULL_HURT;
-                }
-            }
-
-            // NCP Boost: apply a small horizontal boost every tick while moving.
-            if (ncpBoostSetting.getValue() && moving) {
-                double factor = 1.0D + NCP_BOOST * ncpBoostMultiplierSetting.getValue();
-                player.motionX *= factor;
-                player.motionZ *= factor;
-            }
-
-            if (ncpTimerSetting.getValue()) {
-                setTimerSpeed(NCP_TIMER_SPEED);
-                timerApplied = true;
-            } else {
-                setTimerSpeed(1.0F);
-                timerApplied = true;
-            }
-
-            // NCP DamageBoost: minimum horizontal speed while hurt.
-            if (ncpDamageBoostSetting.getValue() && player.hurtTime >= 1) {
-                ncpStrafe(player, Math.max(horizontalSpeed(player), NCP_DAMAGE_BOOST_SPEED),
-                        1.0D);
-            }
+            tickNcp((EntityPlayerSP) player);
             return;
         }
 
@@ -320,14 +273,346 @@ public class Speed extends Module {
         return Math.sqrt(player.motionX * player.motionX + player.motionZ * player.motionZ);
     }
 
-    /** LiquidBounce's withStrafe: no input zeroes horizontal movement. */
-    private static void ncpStrafe(EntityPlayer player, double speed, double strength) {
-        if (!PlayerUtil.isMoving(player)) {
+    // ---- NCP: OpenAdjust's NcpSpeedMode -------------------------------------
+
+    /**
+     * One NCP tick, in the order its {@code update} runs it.
+     *
+     * <p>Its version is called from a post-{@code moveFlying} event, i.e. after vanilla has
+     * folded the input into the motion and before the move. Forge 1.8.9 has no such event, so
+     * the motion is written here, before the player update, and the input layer below keeps
+     * vanilla from adding its own acceleration on top. The result is the same final motion,
+     * with one caveat: the input direction is sampled from the keys rather than from the copy
+     * vanilla has just computed.</p>
+     */
+    private void tickNcp(EntityPlayerSP player) {
+        updateNcpState(player);
+        installNcpInput();
+
+        boolean inWeb = mc.theWorld != null && mc.theWorld.getBlockState(
+                new BlockPos(player.posX, player.posY, player.posZ)).getBlock() == Blocks.web;
+        if (inWeb || player.isOnLadder()) {
+            resetNcp();
+            return;
+        }
+
+        if (!ncpMoving()) {
+            resetNcp();
+            if (player.motionX != 0.0D || player.motionZ != 0.0D) {
+                double multiplier = 0.0D;
+                if (isOverVoid(player)) multiplier = 1.0D;
+                else if (hasSupportAhead(player)) ncpJumped = true;
+                player.motionX *= multiplier;
+                player.motionZ *= multiplier;
+            }
+            return;
+        }
+        if (waitAfterCorrection(player)) return;
+        updateNcpHop(player);
+        if (ncpPendingSpeed != null) {
+            ncpStrafe(player, ncpPendingSpeed);
+            ncpPendingSpeed = null;
+        }
+        if (ncpJumped) return;
+        if (ncpJumpTicks == 11) ncpLowHopPinned = true;
+        applyNcpLowHop(player);
+    }
+
+    /** Its patched EntityPlayer fields, rebuilt from the position delta vanilla already keeps. */
+    private void updateNcpState(EntityPlayerSP player) {
+        if (player.onGround) {
+            ncpOffGroundTicks = 0;
+        } else {
+            ncpOffGroundTicks++;
+        }
+        double dx = player.posX - player.prevPosX;
+        double dz = player.posZ - player.prevPosZ;
+        ncpLastDistance = Math.sqrt(dx * dx + dz * dz);
+        ncpSinceCorrection++;
+    }
+
+    private boolean waitAfterCorrection(EntityPlayerSP player) {
+        if (ncpSinceCorrection >= 4 || player.isCollidedHorizontally) {
+            ncpWaitTicks = 0;
+            return false;
+        }
+        if (!player.onGround) return true;
+        if (ncpSinceCorrection < 3) return true;
+        if (ncpWaitTicks++ < 2) {
+            ncpStrafe(player, ncpBaseSpeed(player) / NCP_CORRECTION_DIVISOR);
+            return true;
+        }
+        return false;
+    }
+
+    private void updateNcpHop(EntityPlayerSP player) {
+        double base = ncpBaseSpeed(player);
+        double initial = player.isPotionActive(Potion.moveSpeed)
+                ? base * NCP_INITIAL_POTION_FACTOR - NCP_INITIAL_POTION_BACKOFF
+                : NCP_INITIAL_SPEED;
+
+        if (ncpOffGroundTicks == 0) {
+            if (ncpMoving()) {
+                if (!ncpDamaged) {
+                    ncpDamaged = true;
+                    ncpSpeed = initial;
+                }
+                ncpJumped = false;
+                if (ncpJumpRequested) {
+                    player.jump();
+                    ncpJumpRequested = false;
+                } else if (player.motionY <= 0.0D) {
+                    player.jump();
+                }
+                ncpLowHopPinned = ncpJumped || ncpSinceCorrection < 41;
+                ncpSpeed *= NCP_GROUND_BOOST;
+                ncpJumpTicks = (int) Math.round(ncpJumpTicksSetting.getValue());
+            }
+        } else if (ncpOffGroundTicks == 1) {
+            double keep = ncpFastSetting.getValue() ? NCP_AIR_KEEP_FAST : NCP_AIR_KEEP;
+            ncpSpeed -= keep * (ncpSpeed - base);
+            ncpDamaged = false;
+        } else {
+            // Its hop decays from the distance actually travelled last tick, not from the
+            // speed it wrote, which is what keeps the curve inside NCP's envelope.
+            ncpSpeed = ncpLastDistance - ncpLastDistance / NCP_FRICTION_DIVISOR;
+        }
+        ncpSpeed = Math.max(ncpSpeed, base);
+        ncpStrafe(player, ncpSpeed);
+    }
+
+    private void applyNcpLowHop(EntityPlayerSP player) {
+        if (ncpJumpRequested) {
+            if (ncpOffGroundTicks >= 7) ncpLowHopPinned = false;
+            return;
+        }
+        if (mc.theWorld != null) {
+            BlockPos pos = new BlockPos(player.posX + 0.5D, player.posY + 0.5D, player.posZ + 0.5D);
+            Block below = mc.theWorld.getBlockState(pos.down()).getBlock();
+            if (mc.theWorld.getBlockState(pos).getBlock() instanceof BlockCarpet
+                    && (below instanceof BlockFenceGate || below instanceof BlockFence)) {
+                // A carpet over a fence is a full block to NCP, so the hop must not be cut.
+                ncpLowHopPinned = true;
+                return;
+            }
+        }
+        double previousY = player.motionY;
+        adjustNcpJumpMotion(player);
+        if (player.motionY >= 0.0D) return;
+        // Cutting the hop into a partial block would flag the descent; keep vanilla's motion
+        // and pin the rest of the hop instead.
+        if (collidesWithPartial(player.getEntityBoundingBox().addCoord(0.0D, player.motionY, 0.0D))) {
+            player.motionY = previousY;
+            ncpLowHopPinned = true;
+        }
+    }
+
+    private void adjustNcpJumpMotion(EntityPlayerSP player) {
+        if (ncpLowHopPinned) return;
+        if (player.isPotionActive(Potion.jump)) {
+            int halfLevel = (player.getActivePotionEffect(Potion.jump).getAmplifier() + 1) / 2;
+            int tick = ncpOffGroundTicks - halfLevel;
+            if (tick == 5) player.motionY -= 0.175D;
+            else if (tick == 7 && halfLevel >= 2) player.motionY -= 0.15D;
+            return;
+        }
+        switch (ncpJumpTicks) {
+            case 8:
+                if (ncpOffGroundTicks == 1) player.motionY += 0.0569D;
+                else if (ncpOffGroundTicks == 3) player.motionY -= 0.1309D;
+                else if (ncpOffGroundTicks == 4) player.motionY -= 0.2D;
+                break;
+            case 9:
+                if (ncpOffGroundTicks == 5) player.motionY -= 0.175D;
+                break;
+            case 10:
+                if (ncpOffGroundTicks == 5) player.motionY -= 0.075D;
+                break;
+            default:
+                // 11 has no entry: the pin at the top of the tick keeps that hop level.
+                break;
+        }
+    }
+
+    private double ncpBaseSpeed(EntityPlayer player) {
+        double base = NCP_BASE_SPEED;
+        PotionEffect effect = player.getActivePotionEffect(Potion.moveSpeed);
+        if (effect != null) {
+            base *= 1.0D + NCP_BASE_POTION_STEP * (effect.getAmplifier() + 1);
+        }
+        return base;
+    }
+
+    /** Its strafe: absolute motion from the held keys, along the rotation NCP will see. */
+    private void ncpStrafe(EntityPlayer player, double speed) {
+        float forward = ncpForward();
+        float strafe = ncpStrafeInput();
+        if (forward == 0.0F && strafe == 0.0F) {
             player.motionX = 0.0D;
             player.motionZ = 0.0D;
             return;
         }
-        PlayerUtil.strafe(player, speed, strength);
+        // Its RenderRotationTracker yaw: the rotation the server will receive, so the motion
+        // lines up with what NCP compares it to.
+        float yaw = SilentLook.isRequested() ? SilentLook.sentAimYaw() : player.rotationYaw;
+        if (forward < 0.0F) yaw += 180.0F;
+        float offset = forward < 0.0F ? -45.0F : forward > 0.0F ? 45.0F : 90.0F;
+        if (strafe > 0.0F) yaw -= offset;
+        if (strafe < 0.0F) yaw += offset;
+        double radians = Math.toRadians(yaw);
+        player.motionX = -Math.sin(radians) * speed;
+        player.motionZ = Math.cos(radians) * speed;
+    }
+
+    private boolean ncpMoving() {
+        return ncpForward() != 0.0F || ncpStrafeInput() != 0.0F;
+    }
+
+    private float ncpForward() {
+        return (mc.gameSettings.keyBindForward.isKeyDown() ? 1.0F : 0.0F)
+                - (mc.gameSettings.keyBindBack.isKeyDown() ? 1.0F : 0.0F);
+    }
+
+    private float ncpStrafeInput() {
+        return (mc.gameSettings.keyBindLeft.isKeyDown() ? 1.0F : 0.0F)
+                - (mc.gameSettings.keyBindRight.isKeyDown() ? 1.0F : 0.0F);
+    }
+
+    /** Marks the input as ours for this tick so vanilla adds no movement of its own. */
+    private void installNcpInput() {
+        MovementInputStack.install("Speed", MovementInputStack.PRIORITY_SPEED, NcpInput::new);
+    }
+
+    private void uninstallNcpInput() {
+        MovementInputStack.uninstall("Speed");
+    }
+
+    @SubscribeEvent
+    public void onClientTick(TickEvent.ClientTickEvent event) {
+        if (event.phase != TickEvent.Phase.END) return;
+        uninstallNcpInput();
+        // The zeroed layer left EntityPlayerSP's own fields at zero for this tick. Put the
+        // real keys back so modules reading them at the next tick's start see the movement.
+        EntityPlayerSP player = mc.thePlayer;
+        if (player != null && isEnabled() && ncp()) {
+            player.moveForward = ncpForward();
+            player.moveStrafing = ncpStrafeInput();
+        }
+    }
+
+    private static final class NcpInput extends MovementInput {
+
+        private final MovementInput delegate;
+
+        private NcpInput(MovementInput delegate) {
+            this.delegate = delegate;
+        }
+
+        @Override
+        public void updatePlayerMoveState() {
+            delegate.updatePlayerMoveState();
+            this.moveForward = 0.0F;
+            this.moveStrafe = 0.0F;
+            this.jump = delegate.jump;
+            this.sneak = delegate.sneak;
+        }
+    }
+
+    private boolean hasSupportAhead(EntityPlayer player) {
+        if (mc.theWorld == null) return false;
+        double distance = Math.max(0.5D, Math.hypot(player.motionX, player.motionZ));
+        double radians = Math.atan2(-player.motionX, player.motionZ);
+        double x = -Math.sin(radians) * distance + player.posX;
+        double z = Math.cos(radians) * distance + player.posZ;
+        AxisAlignedBB box = new AxisAlignedBB(x - 0.3D, player.posY - 0.5D, z - 0.3D,
+                x + 0.3D, player.posY, z + 0.3D);
+        return !mc.theWorld.getCollidingBoundingBoxes(player, box).isEmpty();
+    }
+
+    private boolean isOverVoid(EntityPlayer player) {
+        if (mc.theWorld == null) return false;
+        return mc.theWorld.getCollidingBoundingBoxes(player,
+                player.getEntityBoundingBox().offset(0.0D, -4.0D, 0.0D)).isEmpty();
+    }
+
+    /** True when the swept box touches a stair, slab, snow layer or carpet. */
+    private boolean collidesWithPartial(AxisAlignedBB box) {
+        if (mc.theWorld == null) return false;
+        BlockPos min = new BlockPos(box.minX, box.minY, box.minZ);
+        BlockPos max = new BlockPos(box.maxX, box.maxY, box.maxZ);
+        for (BlockPos pos : BlockPos.getAllInBox(min, max)) {
+            IBlockState state = mc.theWorld.getBlockState(pos);
+            Block block = state.getBlock();
+            boolean partial = block instanceof BlockStairs
+                    || (block instanceof BlockSlab && !((BlockSlab) block).isDouble())
+                    || block == Blocks.snow_layer || block == Blocks.carpet;
+            if (partial && block.getCollisionBoundingBox(mc.theWorld, pos, state) != null) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private void resetNcp() {
+        ncpDamaged = false;
+        ncpSpeed = 0.0D;
+        ncpWaitTicks = 0;
+        ncpPendingSpeed = null;
+    }
+
+    /**
+     * Its damage boost: a knockback while already airborne is turned into the hop's next
+     * speed instead of being applied as velocity. Its 11-tick fall simulation is not ported,
+     * so only the conditions it can check up front are used here.
+     */
+    @ChannelHandler.Sharable
+    private final class NcpPacketHandler extends ChannelInboundHandlerAdapter {
+
+        @Override
+        public void channelRead(ChannelHandlerContext ctx, Object msg) throws Exception {
+            if (isEnabled() && ncp() && msg instanceof Packet) {
+                int id = ncpPlayerId;
+                if (id < 0 && mc.thePlayer != null) {
+                    id = mc.thePlayer.getEntityId();
+                    ncpPlayerId = id;
+                }
+                if (msg instanceof S08PacketPlayerPosLook) {
+                    ncpSinceCorrection = 0;
+                } else if (msg instanceof S12PacketEntityVelocity) {
+                    S12PacketEntityVelocity packet = (S12PacketEntityVelocity) msg;
+                    if (ncpDamageBoostSetting.getValue() && id >= 0
+                            && packet.getEntityID() == id && mc.thePlayer != null
+                            && ncpOffGroundTicks >= 2
+                            && mc.thePlayer.fallDistance <= NCP_DAMAGE_FALL_LIMIT
+                            && ncpSinceCorrection >= 61 && ncpPendingSpeed == null) {
+                        ncpPendingSpeed = Math.hypot(packet.getMotionX() / 8000.0D,
+                                packet.getMotionZ() / 8000.0D);
+                        msg = new S12PacketEntityVelocity(id, 0, 0, 0);
+                    }
+                }
+            }
+            ctx.fireChannelRead(msg);
+        }
+    }
+
+    private void armNcpChannel() {
+        if (mc.getNetHandler() == null || mc.getNetHandler().getNetworkManager() == null) return;
+        Channel channel = mc.getNetHandler().getNetworkManager().channel();
+        if (channel == null || !channel.isActive()) return;
+        ncpChannel = channel;
+        if (channel.pipeline().get("potassium_ncp") == null) {
+            try {
+                channel.pipeline().addBefore("packet_handler", "potassium_ncp", ncpHandler);
+            } catch (Exception ignored) {
+                // The channel can close between the check and the add.
+            }
+        }
+    }
+
+    @SubscribeEvent
+    public void onClientConnected(FMLNetworkEvent.ClientConnectedToServerEvent event) {
+        if (!isEnabled() || event.manager == null) return;
+        armNcpChannel();
     }
 
     /** True when a collision box sits inside the given distance below the player. */
@@ -343,29 +628,6 @@ public class Speed extends Module {
         return isOnGround(player, 0.66D);
     }
 
-    /** Minecraft.timer is private; accept both the MCP and SRG field names. */
-    private Timer getClientTimer() {
-        if (clientTimer == null) {
-            clientTimer = ReflectionHelper.getPrivateValue(Minecraft.class, mc, "timer", "field_71428_T");
-        }
-        return clientTimer;
-    }
-
-    private void setTimerSpeed(float speed) {
-        Timer timer = getClientTimer();
-        if (timer != null) {
-            timer.timerSpeed = speed;
-        }
-    }
-
-    /** Restores the vanilla timer when the active mode stops driving it. */
-    private void resetTimer() {
-        if (timerApplied) {
-            setTimerSpeed(1.0F);
-            timerApplied = false;
-        }
-    }
-
     @Override
     public String getTag() {
         if (ncp()) return MODE_NCP;
@@ -377,22 +639,24 @@ public class Speed extends Module {
 
     @Override
     public void onEnable() {
-        resetTimer();
         airSpeed = 0.0D;
         lowHopSpeed = 0.0D;
         lowHopAirTicks = 0;
         lowHopJumped = false;
-        ncpAirTicks = 0;
+        ncpSinceCorrection = 0;
+        resetNcp();
+        armNcpChannel();
     }
 
     @Override
     public void onDisable() {
-        resetTimer();
         airSpeed = 0.0D;
         lowHopSpeed = 0.0D;
         lowHopAirTicks = 0;
         lowHopJumped = false;
-        ncpAirTicks = 0;
+        resetNcp();
+        uninstallNcpInput();
+        ncpChannel = null;
     }
 
 }
