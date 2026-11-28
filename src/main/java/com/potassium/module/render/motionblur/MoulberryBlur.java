@@ -24,6 +24,7 @@ final class MoulberryBlur {
     }
 
     void render(Framebuffer target, float strength) {
+        if (target == null || target.framebufferWidth < 1 || target.framebufferHeight < 1) return;
         GlStateManager.setActiveTexture(OpenGlHelper.defaultTexUnit);
         GL11.glMatrixMode(5889);
         GL11.glPushMatrix();

@@ -62,6 +62,7 @@ final class MonkeyBlurShader {
         GlStateManager.setActiveTexture(OpenGlHelper.defaultTexUnit);
         ensureDepthTexture(target);
         depthCapture.prepare(target);
+        if (depthTexture <= 0 || depthCapture.mask == null) return;
         if (shaders == null) {
             shaders = MotionBlurRenderer.loadShader(target, "monkey_blur");
             Shader first = MotionBlurRenderer.shaders(shaders).get(0);

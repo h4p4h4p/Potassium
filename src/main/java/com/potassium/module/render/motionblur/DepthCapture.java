@@ -22,7 +22,8 @@ final class DepthCapture {
     boolean prepared;
 
     void prepare(Framebuffer framebuffer) {
-        if (prepared) return;
+        if (prepared || framebuffer == null || framebuffer.framebufferWidth < 1
+                || framebuffer.framebufferHeight < 1) return;
         boolean depth = GL11.glIsEnabled(2929);
         boolean depthWrite = GL11.glGetBoolean(2930);
         int activeTexture = GL11.glGetInteger(34016);
