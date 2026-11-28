@@ -89,31 +89,13 @@ public final class PlacementPredictor {
                                 MathHelper.floor_double(position.zCoord + dz));
                         if (PlacementFinder.collisionBox(candidate) == null) continue;
                         free.add(candidate);
-
-                        for (EnumFacing facing : EnumFacing.VALUES) {
-                            BlockPos neighbour = candidate.offset(facing);
-                            if (lowOnly && neighbour.getY() != MathHelper.floor_double(position.yCoord) - 1) {
-                                continue;
-                            }
-                            if (facing == EnumFacing.UP) {
-                                if (ground) continue;
-                                if (neighbour.getX() != playerBlock.getX()
-                                        || neighbour.getZ() != playerBlock.getZ()) {
-                                    continue;
-                                }
-                            } else if (module.isJumping() && !module.isMoving()
-                                    && module.horizontalSpeed() < 0.035D && player.motionY > -0.2D) {
-                                continue;
-                            }
-                            if (PlacementFinder.collisionBox(neighbour) != null) continue;
-                            if (playerBox.intersectsWith(PlacementFinder.blockBox(neighbour))) continue;
-                            if (module.isAboveBuildLimit(neighbour.getY())) continue;
-                            supports.add(neighbour);
-                        }
+                        collectSupports(player, candidate, position, playerBlock, playerBox,
+                                ground, lowOnly, supports);
                     }
                 }
             }
             if (supports.isEmpty()) continue;
+
 
             final Vec3 from = position;
             List<BlockPos> sorted = new ArrayList<>(supports);
@@ -158,6 +140,35 @@ public final class PlacementPredictor {
             }
         }
         return null;
+    }
+
+    /**
+     * Every free neighbour of one solid block, kept out of the predictor's scan loop: Java
+     * 8u51's C2 compiler crashes on the original single-method form of that loop.
+     */
+    private void collectSupports(EntityPlayerSP player, BlockPos candidate, Vec3 position,
+                                 BlockPos playerBlock, AxisAlignedBB playerBox, boolean ground,
+                                 boolean lowOnly, Set<BlockPos> supports) {
+        for (EnumFacing facing : EnumFacing.VALUES) {
+            BlockPos neighbour = candidate.offset(facing);
+            if (lowOnly && neighbour.getY() != MathHelper.floor_double(position.yCoord) - 1) {
+                continue;
+            }
+            if (facing == EnumFacing.UP) {
+                if (ground) continue;
+                if (neighbour.getX() != playerBlock.getX()
+                        || neighbour.getZ() != playerBlock.getZ()) {
+                    continue;
+                }
+            } else if (module.isJumping() && !module.isMoving()
+                    && module.horizontalSpeed() < 0.035D && player.motionY > -0.2D) {
+                continue;
+            }
+            if (PlacementFinder.collisionBox(neighbour) != null) continue;
+            if (playerBox.intersectsWith(PlacementFinder.blockBox(neighbour))) continue;
+            if (module.isAboveBuildLimit(neighbour.getY())) continue;
+            supports.add(neighbour);
+        }
     }
 
     private Integer accept(PlacementTarget target, int tick) {

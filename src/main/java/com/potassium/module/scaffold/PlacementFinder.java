@@ -112,29 +112,40 @@ public final class PlacementFinder {
                 double y = yFixed ? yLo : (double) j * (yHi - yLo) / (double) (ySteps - 1) + yLo;
                 for (int k = 0; k < zSteps; k++) {
                     double z = zFixed ? zLo : (zHi - zLo) * (double) k / (double) (zSteps - 1) + zLo;
-
-                    if (freeAxes > 0) {
-                        boolean nearCentre = true;
-                        if (!xFixed) nearCentre = Math.abs(x - centreX) < 0.2D;
-                        if (!yFixed) nearCentre &= Math.abs(y - centreY) < 0.2D;
-                        if (!zFixed) nearCentre &= Math.abs(z - centreZ) < 0.2D;
-                        if (nearCentre) continue;
-                    }
-
-                    double dx = x - eyes.xCoord;
-                    double dy = y - eyes.yCoord;
-                    double dz = z - eyes.zCoord;
-                    double horizontal = MathHelper.sqrt_double(dx * dx + dz * dz);
-                    float yaw = (float) (Math.atan2(dz, dx) * 180.0D / Math.PI) - 90.0F;
-                    float pitch = (float) (-Math.atan2(dy, horizontal) * 180.0D / Math.PI);
-
-                    result.add(new RotationCandidate(
-                            new Vec3(x - blockPos.getX(), y - blockPos.getY(), z - blockPos.getZ()),
-                            blockPos, yaw, pitch));
+                    RotationCandidate candidate = samplePoint(eyes, x, y, z, blockPos, freeAxes,
+                            xFixed, yFixed, zFixed, centreX, centreY, centreZ);
+                    if (candidate != null) result.add(candidate);
                 }
             }
         }
         return result;
+    }
+
+    /**
+     * One sampled point of a face, kept out of the loop above on purpose: Java 8u51's C2
+     * compiler crashes on the original single-method form of this loop.
+     */
+    private static RotationCandidate samplePoint(Vec3 eyes, double x, double y, double z,
+                                                 BlockPos blockPos, int freeAxes,
+                                                 boolean xFixed, boolean yFixed, boolean zFixed,
+                                                 double centreX, double centreY, double centreZ) {
+        if (freeAxes > 0) {
+            boolean nearCentre = true;
+            if (!xFixed) nearCentre = Math.abs(x - centreX) < 0.2D;
+            if (!yFixed) nearCentre &= Math.abs(y - centreY) < 0.2D;
+            if (!zFixed) nearCentre &= Math.abs(z - centreZ) < 0.2D;
+            if (nearCentre) return null;
+        }
+
+        double dx = x - eyes.xCoord;
+        double dy = y - eyes.yCoord;
+        double dz = z - eyes.zCoord;
+        double horizontal = MathHelper.sqrt_double(dx * dx + dz * dz);
+        float yaw = (float) (Math.atan2(dz, dx) * 180.0D / Math.PI) - 90.0F;
+        float pitch = (float) (-Math.atan2(dy, horizontal) * 180.0D / Math.PI);
+        return new RotationCandidate(
+                new Vec3(x - blockPos.getX(), y - blockPos.getY(), z - blockPos.getZ()),
+                blockPos, yaw, pitch);
     }
 
     /**
