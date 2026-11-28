@@ -39,12 +39,7 @@ public class Speed extends Module {
 
     public static final String MODE_NORMAL = "Normal";
     public static final String MODE_LEGIT_HOP = "LegitHop";
-    public static final String MODE_LOW_HOP = "LowHop";
     public static final String MODE_NCP = "NCP";
-    public static final String MODE_VULCAN = "Vulcan";
-
-    // Same ground speed Normal starts from, so the default multiplier lands around 0.33.
-    private static final double LOW_HOP_BASE_SPEED = 0.28D;
 
     // OpenAdjust's NCP constants, from its NcpSpeedMode.
     private static final double NCP_BASE_SPEED = 0.2873D;
@@ -61,10 +56,9 @@ public class Speed extends Module {
     private static final float NCP_DAMAGE_FALL_LIMIT = 2.5F;
 
     private final ModeSetting modeSetting = new ModeSetting("Mode",
-            new String[]{MODE_NORMAL, MODE_LEGIT_HOP, MODE_LOW_HOP, MODE_NCP, MODE_VULCAN}, 0);
+            new String[]{MODE_NORMAL, MODE_LEGIT_HOP, MODE_NCP}, 0);
     private final SliderSetting speedSetting = new SliderSetting("Speed", 1.2, 0.5, 5.0, 0.05);
     private final BooleanSetting autoJumpSetting = new BooleanSetting("Auto Jump", true);
-    private final BooleanSetting glideSetting = new BooleanSetting("Glide", false);
     // The three settings its NcpSpeedMode exposes.
     private final BooleanSetting ncpFastSetting = new BooleanSetting("Fast", false);
     private final BooleanSetting ncpDamageBoostSetting = new BooleanSetting("Damage Boost", false);
@@ -77,12 +71,6 @@ public class Speed extends Module {
     // VerusHop-style speed: one acceleration on the ground, then decay in the air.
     // Re-strafing to full speed every airborne tick is what the speed checks see.
     private double airSpeed;
-
-    // LowHop: hold the horizontal speed flat through the hop and cut the jump
-    // short on the first air tick so the bounce stays near the ground.
-    private double lowHopSpeed;
-    private int lowHopAirTicks;
-    private boolean lowHopJumped;
 
     // NCP state, mirroring its NcpSpeedState.
     private int ncpOffGroundTicks;
@@ -104,7 +92,6 @@ public class Speed extends Module {
         settings.add(modeSetting);
         settings.add(speedSetting);
         settings.add(autoJumpSetting);
-        settings.add(glideSetting);
         settings.add(ncpFastSetting);
         settings.add(ncpDamageBoostSetting);
         settings.add(ncpJumpTicksSetting);
@@ -114,12 +101,11 @@ public class Speed extends Module {
     @Override
     public boolean isSettingVisible(Setting setting) {
         if (setting == speedSetting) {
-            return !legitHop() && !ncp() && !vulcan();
+            return !legitHop() && !ncp();
         }
         if (setting == autoJumpSetting) {
-            return !legitHop() && !lowHop() && !ncp() && !vulcan();
+            return !legitHop() && !ncp();
         }
-        if (setting == glideSetting) return lowHop();
         if (setting == ncpFastSetting || setting == ncpDamageBoostSetting
                 || setting == ncpJumpTicksSetting) {
             return ncp();
@@ -135,21 +121,8 @@ public class Speed extends Module {
         return MODE_LEGIT_HOP.equals(mode());
     }
 
-    private boolean lowHop() {
-        return MODE_LOW_HOP.equals(mode());
-    }
-
     private boolean ncp() {
         return MODE_NCP.equals(mode());
-    }
-
-    private boolean vulcan() {
-        return MODE_VULCAN.equals(mode());
-    }
-
-    /** True while the vanilla-physics Vulcan mode is active; other modules read this. */
-    public boolean isVulcanMode() {
-        return isEnabled() && vulcan();
     }
 
     @SubscribeEvent
@@ -177,48 +150,8 @@ public class Speed extends Module {
             return;
         }
 
-        if (lowHop()) {
-            boolean moving = PlayerUtil.isMoving(player) && !player.isSneaking();
-            if (player.onGround) {
-                if (!moving) return;
-                lowHopAirTicks = 0;
-                lowHopJumped = true;
-                if (!vanillaJumps()) player.jump();
-                lowHopSpeed = LOW_HOP_BASE_SPEED * speedSetting.getValue();
-            } else {
-                // Cutting the rise on the first air tick is the "low" in LowHop: the jump
-                // peaks almost immediately, so the next hop starts a few ticks after take-off.
-                // The tick counter keeps running while no key is held, so releasing them
-                // mid-jump cannot re-trigger the cut later in the same hop.
-                if (lowHopJumped && ++lowHopAirTicks == 1) {
-                    player.motionY = -0.098D;
-                }
-                if (isGroundExempt(player)) {
-                    // Ground exemption: while skimming the floor the anti-cheat treats the
-                    // movement as grounded, so hold the air speed instead of bleeding it off.
-                    if (glideSetting.getValue()) {
-                        player.motionY = 0.0D;
-                    }
-                } else {
-                    lowHopSpeed *= 0.99D;
-                }
-                if (!moving) return;
-            }
-            // Enabling mid-air leaves the speed at zero until the first hop; strafing with it
-            // would zero the player's momentum.
-            if (lowHopSpeed > 0.0D) {
-                PlayerUtil.strafe(player, lowHopSpeed);
-            }
-            return;
-        }
-
         if (ncp()) {
             tickNcp((EntityPlayerSP) player);
-            return;
-        }
-
-        if (vulcan()) {
-            tickVulcan((EntityPlayerSP) player);
             return;
         }
 
@@ -236,26 +169,6 @@ public class Speed extends Module {
         if (airSpeed > 0.0D) {
             PlayerUtil.strafe(player, airSpeed);
         }
-    }
-
-    /**
-     * Vulcan: a bunny hop on vanilla physics.
-     *
-     * <p>Vulcan's Speed check is a prediction: it replays the tick from the previous motion,
-     * the input's own acceleration and the sprint boost vanilla adds on a jump. A module
-     * write on the jump tick lands on top of all three, because the jump event runs before
-     * vanilla applies its movement input and its own jump. A pinned 0.4815 therefore left the
-     * player at roughly 0.81 blocks that tick against the 0.48 a sprint jump can produce, and
-     * that difference is the prediction flag.</p>
-     *
-     * <p>The mode adds no motion at all. Its speed comes from jumping on the first grounded
-     * tick every time, which keeps the sprint-jump envelope a prediction accepts, and from
-     * never letting vanilla stack a second jump's sprint boost on the same tick.</p>
-     */
-    private void tickVulcan(EntityPlayerSP player) {
-        if (!PlayerUtil.isMoving(player) || player.isSneaking()) return;
-        if (!player.onGround) return;
-        if (!vanillaJumps()) player.jump();
     }
 
     /**
@@ -615,23 +528,9 @@ public class Speed extends Module {
         armNcpChannel();
     }
 
-    /** True when a collision box sits inside the given distance below the player. */
-    private boolean isOnGround(EntityPlayer player, double distance) {
-        if (mc.theWorld == null) return false;
-        AxisAlignedBB below = player.getEntityBoundingBox().offset(0.0D, -distance, 0.0D);
-        return !mc.theWorld.getCollidingBoundingBoxes(player, below).isEmpty();
-    }
-
-    /** True while descending with a block within 0.66 blocks below the player. */
-    private boolean isGroundExempt(EntityPlayer player) {
-        if (player.motionY >= 0.0D) return false;
-        return isOnGround(player, 0.66D);
-    }
-
     @Override
     public String getTag() {
         if (ncp()) return MODE_NCP;
-        if (vulcan()) return MODE_VULCAN;
         if (legitHop()) return MODE_LEGIT_HOP;
         double value = speedSetting.getValue();
         return (Math.round(value * 100.0) / 100.0) + "x";
@@ -640,9 +539,6 @@ public class Speed extends Module {
     @Override
     public void onEnable() {
         airSpeed = 0.0D;
-        lowHopSpeed = 0.0D;
-        lowHopAirTicks = 0;
-        lowHopJumped = false;
         ncpSinceCorrection = 0;
         resetNcp();
         armNcpChannel();
@@ -651,9 +547,6 @@ public class Speed extends Module {
     @Override
     public void onDisable() {
         airSpeed = 0.0D;
-        lowHopSpeed = 0.0D;
-        lowHopAirTicks = 0;
-        lowHopJumped = false;
         resetNcp();
         uninstallNcpInput();
         ncpChannel = null;

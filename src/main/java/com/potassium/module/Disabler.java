@@ -1,6 +1,5 @@
 package com.potassium.module;
 
-import com.potassium.Potassium;
 import com.potassium.settings.BooleanSetting;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelDuplexHandler;
@@ -21,11 +20,9 @@ import net.minecraftforge.fml.common.gameevent.TickEvent;
  * leaves the player sprinting locally (FOV, input speed) while the server keeps treating
  * them as walking.</p>
  *
- * <p>That is exactly what a movement prediction check measures, so the suppression is
- * skipped while the Speed module's Vulcan mode is running: Vulcan replays each tick from
- * the previous motion and the sprint boost the server has been told about. With the sprint
- * actions hidden the server predicts walking speed for a client that moves at sprint
- * speed, and every sprinting tick fails Speed (Prediction).</p>
+ * <p>That is exactly what a movement prediction check measures: the server predicts walking
+ * speed for a client that moves at sprint speed, so every sprinting tick fails the check.
+ * Only hide the actions while the movement stays inside walking speed.</p>
  */
 public class Disabler extends Module {
 
@@ -52,17 +49,9 @@ public class Disabler extends Module {
         armChannel();
     }
 
-    /**
-     * True while the sprint actions should be dropped. Vulcan's Speed check is a pure
-     * prediction, so it is skipped for as long as the Speed module's Vulcan mode drives
-     * the player; hiding sprint there only makes the movement and the server's state
-     * disagree.
-     */
+    /** True while the sprint actions should be dropped. */
     private boolean hidesSprint() {
-        if (!isEnabled() || !noSprintPacketSetting.getValue()) return false;
-        if (Potassium.INSTANCE == null) return false;
-        Module speed = Potassium.INSTANCE.moduleManager.getModule("Speed");
-        return !(speed instanceof Speed && ((Speed) speed).isVulcanMode());
+        return isEnabled() && noSprintPacketSetting.getValue();
     }
 
     private static boolean isSprintAction(C0BPacketEntityAction packet) {
