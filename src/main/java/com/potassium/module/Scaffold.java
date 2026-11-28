@@ -514,11 +514,13 @@ public class Scaffold extends Module {
         // Raycast is the safety gate: with it on, the rotation the server already holds must
         // land on the face before a click goes out. Off, the click is trusted to the solved
         // placement alone, which is faster and can leave a ghost block on a strict server.
-        boolean aimVerified = !placementFinder.useRaycast()
-                || serverAimReaches(player, placement);
-        if (placement != null && canPlaceNow() && ClickState.canUse(tick) && arrived()
-                && aimVerified && (!options.isWaitForClick() || canClick())) {
-            executePlacement(player, placement, tick);
+        if (placement != null) {
+            boolean aimVerified = !placementFinder.useRaycast()
+                    || serverAimReaches(player, placement);
+            if (canPlaceNow() && ClickState.canUse(tick) && arrived() && aimVerified
+                    && (!options.isWaitForClick() || canClick())) {
+                executePlacement(player, placement, tick);
+            }
         }
     }
 
@@ -652,6 +654,9 @@ public class Scaffold extends Module {
      * its placement check uses. A ray from that rotation must land on the face being clicked.
      */
     private boolean serverAimReaches(EntityPlayerSP player, PlacementTarget target) {
+        if (player == null || target == null || mc.theWorld == null || mc.playerController == null) {
+            return false;
+        }
         float yaw = RotationManager.hasServerRotation()
                 ? RotationManager.serverYaw() : player.rotationYaw;
         float pitch = RotationManager.hasServerRotation()
