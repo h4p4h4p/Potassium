@@ -345,31 +345,49 @@ public class RenderUtil {
         return mc.fontRendererObj.FONT_HEIGHT;
     }
 
+    /**
+     * Size of the text inside an expanded module, as a fraction of the module rows. The
+     * reference client's config list sets its settings in a face one step smaller than the
+     * module names, and this reproduces that ratio.
+     */
+    public static final float SETTINGS_TEXT_SCALE = 0.83f;
+
+    /** Scale the ClickGUI text helpers draw at; the settings column lowers it. */
+    private static float guiTextScale = 1f;
+
+    public static float getGuiTextScale() {
+        return guiTextScale;
+    }
+
+    public static void setGuiTextScale(float scale) {
+        guiTextScale = scale > 0f ? scale : 1f;
+    }
+
     /** Tahoma text for the ClickGUI, matching Adjust's UI face. */
     public static void drawGuiString(String text, float x, float y, int color) {
-        GuiFont.drawString(text, x, y, color, false);
+        GuiFont.drawString(text, x, y, color, false, guiTextScale);
     }
 
     /** HUD text with a drop shadow. Kept separate from the flat ClickGUI text. */
     public static void drawGuiStringShadow(String text, float x, float y, int color) {
-        GuiFont.drawStringWithShadow(text, x, y, color, false);
+        GuiFont.drawStringWithShadow(text, x, y, color, false, guiTextScale);
     }
 
     /** Tahoma bold, used by the ClickGUI category headers. */
     public static void drawGuiStringBold(String text, float x, float y, int color) {
-        GuiFont.drawString(text, x, y, color, true);
+        GuiFont.drawString(text, x, y, color, true, guiTextScale);
     }
 
     public static float getGuiTextWidth(String text) {
-        return GuiFont.width(text, false);
+        return GuiFont.width(text, false, guiTextScale);
     }
 
     public static float getGuiTextWidthBold(String text) {
-        return GuiFont.width(text, true);
+        return GuiFont.width(text, true, guiTextScale);
     }
 
     public static float getGuiTextHeight() {
-        return GuiFont.height();
+        return GuiFont.height(guiTextScale);
     }
 
     /** Whole-pixel Tahoma measurements for HUD elements, which are laid out on an int grid. */
@@ -383,6 +401,6 @@ public class RenderUtil {
 
     /** Top of a text line centred in a row of the given height. */
     public static float guiTextY(float rowTop, float rowHeight) {
-        return rowTop + (rowHeight - GuiFont.height()) * 0.5f;
+        return rowTop + (rowHeight - GuiFont.height(guiTextScale)) * 0.5f;
     }
 }

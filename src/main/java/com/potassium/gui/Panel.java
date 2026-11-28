@@ -107,11 +107,20 @@ public class Panel {
     public float getBaseWidth() {
         float w = DEFAULT_WIDTH;
         for (ModuleButton button : visibleButtons()) {
+            // Measured at the size each part is drawn: the module name full size, the
+            // column under it at the settings size.
             float bw = RenderUtil.getGuiTextWidth(button.getModule().getName());
-            float bindW = button.getBindWidget() == null ? 0 : RenderUtil.getGuiTextWidth(button.getBindWidget().keyName());
-            bw += bindW + 36;
-            for (Widget widget : button.getWidgets()) {
-                bw = Math.max(bw, widget.getPreferredWidth() + 8);
+            float previousTextScale = RenderUtil.getGuiTextScale();
+            RenderUtil.setGuiTextScale(RenderUtil.SETTINGS_TEXT_SCALE);
+            try {
+                float bindW = button.getBindWidget() == null ? 0
+                        : RenderUtil.getGuiTextWidth(button.getBindWidget().keyName());
+                bw += bindW + 36;
+                for (Widget widget : button.getWidgets()) {
+                    bw = Math.max(bw, widget.getPreferredWidth() + 8);
+                }
+            } finally {
+                RenderUtil.setGuiTextScale(previousTextScale);
             }
             w = Math.max(w, bw);
         }

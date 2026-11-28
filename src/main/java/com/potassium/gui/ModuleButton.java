@@ -190,10 +190,18 @@ public class ModuleButton {
             float widgetW = preview ? px - (x + 4) - 8 : width - 8;
 
             float wy = y + ROW_HEIGHT;
-            for (Widget widget : widgets) {
-                widget.setPosition(x + 4, wy, widgetW, widget.getHeight());
-                widget.draw(mx, my);
-                wy += widget.getHeight();
+            // Everything under the module row draws one size down, the way the reference
+            // client's config list sets its settings in a smaller face than its module names.
+            float previousTextScale = RenderUtil.getGuiTextScale();
+            RenderUtil.setGuiTextScale(RenderUtil.SETTINGS_TEXT_SCALE);
+            try {
+                for (Widget widget : widgets) {
+                    widget.setPosition(x + 4, wy, widgetW, widget.getHeight());
+                    widget.draw(mx, my);
+                    wy += widget.getHeight();
+                }
+            } finally {
+                RenderUtil.setGuiTextScale(previousTextScale);
             }
             if (preview) {
                 RenderUtil.drawRect(px - 5, y + ROW_HEIGHT, 1, wh, Theme.SEPARATOR);

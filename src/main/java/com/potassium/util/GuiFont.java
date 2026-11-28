@@ -13,6 +13,8 @@ import java.awt.Graphics2D;
 import java.awt.RenderingHints;
 import java.awt.image.BufferedImage;
 import java.nio.ByteBuffer;
+import java.util.HashMap;
+import java.util.Map;
 
 /**
  * Tahoma text for the ClickGUI and HUD, matching Adjust's UI font.
@@ -81,7 +83,18 @@ public final class GuiFont {
     }
 
     public static void drawString(String text, float x, float y, int color, boolean bold) {
-        draw(text, x, y, color, bold, false);
+        drawString(text, x, y, color, bold, 1f);
+    }
+
+    /**
+     * Text at {@code sizeFactor} of the current face. The ClickGUI draws the rows inside an
+     * expanded module this way: the reference client's config list uses a smaller face than
+     * its module rows, and baking a second atlas keeps that text crisp instead of scaling a
+     * larger bitmap down with linear filtering.
+     */
+    public static void drawString(String text, float x, float y, int color, boolean bold,
+                                  float sizeFactor) {
+        draw(text, x, y, color, bold, false, sizeFactor);
     }
 
     /**
@@ -90,23 +103,29 @@ public final class GuiFont {
      * ClickGUI keeps using {@link #drawString} and stays flat.
      */
     public static void drawStringWithShadow(String text, float x, float y, int color, boolean bold) {
+        drawStringWithShadow(text, x, y, color, bold, 1f);
+    }
+
+    public static void drawStringWithShadow(String text, float x, float y, int color, boolean bold,
+                                            float sizeFactor) {
         if (text == null || text.isEmpty()) return;
 
         Atlas atlas = bold ? BOLD : REGULAR;
-        if (atlas.bake(activeScale()) == null) {
+        if (atlas.bake(activeScale(), sizeFactor) == null) {
             Minecraft.getMinecraft().fontRendererObj.drawStringWithShadow(text, (int) x, (int) y, color);
             return;
         }
 
-        draw(text, x + 1f, y + 1f, 0xC8000000, bold, true);
-        draw(text, x, y, color, bold, false);
+        draw(text, x + 1f, y + 1f, 0xC8000000, bold, true, sizeFactor);
+        draw(text, x, y, color, bold, false, sizeFactor);
     }
 
-    private static void draw(String text, float x, float y, int color, boolean bold, boolean shadow) {
+    private static void draw(String text, float x, float y, int color, boolean bold, boolean shadow,
+                             float sizeFactor) {
         if (text == null || text.isEmpty()) return;
 
         Atlas atlas = bold ? BOLD : REGULAR;
-        Bake bake = atlas.bake(activeScale());
+        Bake bake = atlas.bake(activeScale(), sizeFactor);
         if (bake == null) {
             Minecraft.getMinecraft().fontRendererObj.drawStringWithShadow(text, (int) x, (int) y, color);
             return;
@@ -181,8 +200,12 @@ public final class GuiFont {
     }
 
     public static float width(String text, boolean bold) {
+        return width(text, bold, 1f);
+    }
+
+    public static float width(String text, boolean bold, float sizeFactor) {
         if (text == null || text.isEmpty()) return 0f;
-        Bake bake = (bold ? BOLD : REGULAR).bake(activeScale());
+        Bake bake = (bold ? BOLD : REGULAR).bake(activeScale(), sizeFactor);
         if (bake == null) return Minecraft.getMinecraft().fontRendererObj.getStringWidth(text);
 
         float w = 0f;
@@ -200,7 +223,11 @@ public final class GuiFont {
     }
 
     public static float height() {
-        Bake bake = REGULAR.bake(activeScale());
+        return height(1f);
+    }
+
+    public static float height(float sizeFactor) {
+        Bake bake = REGULAR.bake(activeScale(), sizeFactor);
         if (bake == null) return Minecraft.getMinecraft().fontRendererObj.FONT_HEIGHT;
         return bake.cellHeight;
     }
@@ -241,8 +268,12 @@ public final class GuiFont {
         /** Bake for the HUD's Minecraft GUI scale; rebuilt when that setting changes. */
         private Bake hud;
         private int hudScale = -1;
-        /** Bake for a caller with its own pixels-per-unit (the ClickGUI), kept alongside. */
-        private Bake fixed;
+        /**
+         * Bakes for callers with their own pixels-per-unit (the ClickGUI), keyed by that
+         * scale. The ClickGUI draws module rows and the smaller settings text in the same
+         * frame, so a single cached bake would be rebuilt between every pair of rows.
+         */
+        private final Map<String, Bake> fixed = new HashMap<>();
 
         private Atlas(int style) {
             this.style = style;
@@ -253,21 +284,25 @@ public final class GuiFont {
          * The HUD and the ClickGUI draw in the same frame at different scales, so each keeps
          * its own bake rather than making the other rebuild its atlas on every frame.
          */
-        private Bake bake(float scale) {
+        private Bake bake(float pixelsPerUnit, float sizeFactor) {
             Bake result;
             if (overrideScale > 0f) {
-                if (fixed == null || Math.abs(fixed.scale - scale) > 1.0E-3f) {
-                    fixed = build(scale);
+                String key = Math.round(pixelsPerUnit * 1000f) + ":"
+                        + Math.round(sizeFactor * 1000f);
+                Bake cached = fixed.get(key);
+                if (cached == null) {
+                    cached = build(pixelsPerUnit, sizeFactor);
+                    fixed.put(key, cached);
                 }
-                result = fixed;
+                result = cached;
             } else {
-                int guiScale = Math.max(1, Math.round(scale));
+                int guiScale = Math.max(1, Math.round(pixelsPerUnit));
                 if (hud == null || hudScale != guiScale) {
                     if (hud != null && hud.texture != 0) {
                         GlStateManager.bindTexture(0);
                         GL11.glDeleteTextures(hud.texture);
                     }
-                    hud = build(guiScale);
+                    hud = build(guiScale, 1f);
                     hudScale = guiScale;
                 }
                 result = hud;
@@ -275,10 +310,13 @@ public final class GuiFont {
             return result != null && !result.failed ? result : null;
         }
 
-        private Bake build(float scale) {
+        private Bake build(float scale, float sizeFactor) {
             Bake bake = new Bake(scale);
             try {
-                int fontPx = Math.max(1, Math.round(SIZE * scale));
+                // The glyphs are rasterised smaller but still divided by the caller's
+                // pixels-per-unit, so a setting row is a genuinely small face drawn 1:1
+                // instead of a large one shrunk by the matrix.
+                int fontPx = Math.max(1, Math.round(SIZE * scale * sizeFactor));
                 Font font = new Font("Tahoma", style, fontPx);
                 BufferedImage image = new BufferedImage(ATLAS_W, ATLAS_H, BufferedImage.TYPE_INT_ARGB);
                 Graphics2D g = image.createGraphics();

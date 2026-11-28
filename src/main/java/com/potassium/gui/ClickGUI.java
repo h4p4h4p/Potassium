@@ -113,10 +113,17 @@ public class ClickGUI extends GuiScreen {
             for (Panel panel : panels) {
                 panel.draw(mx, my);
             }
-            // After every panel, so open dropdowns are not painted over by the settings below them.
-            ModeWidget.drawOpenPopup(mx, my, viewHeight - 4f);
-            searchField.draw(mx, my);
-            SelectWidget.drawOpenPopup(mx, my, viewHeight - 4f);
+            // After every panel, so open dropdowns are not painted over by the settings below
+            // them. They belong to the settings column, so they draw at its smaller size too.
+            float previousTextScale = RenderUtil.getGuiTextScale();
+            RenderUtil.setGuiTextScale(RenderUtil.SETTINGS_TEXT_SCALE);
+            try {
+                ModeWidget.drawOpenPopup(mx, my, viewHeight - 4f);
+                searchField.draw(mx, my);
+                SelectWidget.drawOpenPopup(mx, my, viewHeight - 4f);
+            } finally {
+                RenderUtil.setGuiTextScale(previousTextScale);
+            }
         } finally {
             GuiFont.popScale();
             GlStateManager.popMatrix();
@@ -212,7 +219,13 @@ public class ClickGUI extends GuiScreen {
         int my = Math.round(viewHeight() - Mouse.getEventY() * viewHeight() / mc.displayHeight - 1);
         GuiFont.pushScale(PIXELS_PER_UNIT);
         try {
-            if (SelectWidget.handleOpenPopupScroll(mx, my, wheel)) return;
+            float previousTextScale = RenderUtil.getGuiTextScale();
+            RenderUtil.setGuiTextScale(RenderUtil.SETTINGS_TEXT_SCALE);
+            try {
+                if (SelectWidget.handleOpenPopupScroll(mx, my, wheel)) return;
+            } finally {
+                RenderUtil.setGuiTextScale(previousTextScale);
+            }
             for (Panel panel : panels) {
                 if (panel.isCollapsed() || !panel.contains(mx, my)) continue;
                 panel.scrollBy(-wheel * 14f);
@@ -250,12 +263,19 @@ public class ClickGUI extends GuiScreen {
         }
 
         // A mode list swallows every click while it is open: pick, or dismiss without
-        // letting the click through to the module row and toggle it.
-        if (ModeWidget.handleOpenPopupClick(mouseX, mouseY, mouseButton)) {
-            return;
-        }
-        if (SelectWidget.handleOpenPopupClick(mouseX, mouseY, mouseButton)) {
-            return;
+        // letting the click through to the module row and toggle it. The list is laid out at
+        // the settings text size, so its hit boxes are tested at that size as well.
+        float previousTextScale = RenderUtil.getGuiTextScale();
+        RenderUtil.setGuiTextScale(RenderUtil.SETTINGS_TEXT_SCALE);
+        try {
+            if (ModeWidget.handleOpenPopupClick(mouseX, mouseY, mouseButton)) {
+                return;
+            }
+            if (SelectWidget.handleOpenPopupClick(mouseX, mouseY, mouseButton)) {
+                return;
+            }
+        } finally {
+            RenderUtil.setGuiTextScale(previousTextScale);
         }
 
         if (searchField.onClick(mouseX, mouseY, mouseButton)) {
