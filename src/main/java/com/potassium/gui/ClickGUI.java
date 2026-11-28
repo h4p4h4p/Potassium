@@ -347,6 +347,12 @@ public class ClickGUI extends GuiScreen {
             return;
         }
 
+        KeyWidget keyWidget = KeyWidget.capturing();
+        if (keyWidget != null) {
+            keyWidget.setKey(keyCode);
+            return;
+        }
+
         BindWidget capturing = findCapturingBind();
         if (capturing != null) {
             if (keyCode == Keyboard.KEY_ESCAPE || keyCode == Keyboard.KEY_DELETE) {

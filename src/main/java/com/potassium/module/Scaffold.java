@@ -106,6 +106,7 @@ public class Scaffold extends Module {
     private PlacementTarget placement;
     private boolean placeReady;
     private boolean rotating;
+    private int validSlotTicks;
     /** Ticks since the predictor last found a target; OpenAdjust's rotation window. */
     public int ticksSincePlace = 100;
     private int offGroundTicks;
@@ -168,6 +169,45 @@ public class Scaffold extends Module {
 
     public void setPreventsAscend(boolean value) {
         preventsAscend = value;
+    }
+
+    /** OpenAdjust's {@code field130}: a tower jump must not move the bridge's base level. */
+    public boolean skipBaseYUpdate;
+
+    private boolean inputHeld;
+
+    public int getOffGroundTicks() {
+        return offGroundTicks;
+    }
+
+    public void setOffGroundTicks(int value) {
+        offGroundTicks = Math.max(0, value);
+    }
+
+    public boolean isJumpKeyDown() {
+        return mc.gameSettings != null && mc.gameSettings.keyBindJump.isKeyDown();
+    }
+
+    public void holdInput() {
+        inputHeld = true;
+    }
+
+    public void releaseInput() {
+        inputHeld = false;
+    }
+
+    /** OpenAdjust's forward-look gate: only look ahead while a placement is being worked on. */
+    public boolean shouldRotateForward(boolean force) {
+        if (!options.isRotationsEnabled()) return false;
+        if (!force && mc.thePlayer != null && mc.thePlayer.onGround) return false;
+        return placeReady && currentMode().allowForwardTurn();
+    }
+
+    /** The angle between the way the player is walking and where the aim points. */
+    public float facingMovement() {
+        float movement = MathHelper.wrapAngleTo180_float(moveYaw());
+        float aim = MathHelper.wrapAngleTo180_float(getAimYaw());
+        return Math.abs(MathHelper.wrapAngleTo180_float(movement - aim));
     }
 
     public String noAscendMode() {
@@ -443,7 +483,10 @@ public class Scaffold extends Module {
 
         boolean nearGround = ground != null && ground < 5;
         boolean hasBlock = selectBlock(nearGround);
-        placeReady = hasBlock;
+        validSlotTicks = hasBlock ? validSlotTicks + 1 : 0;
+        // OpenAdjust waits two ticks on the block slot before placing, so a scroll or a
+        // hotbar press that just landed has the slot it needs by the time the click goes.
+        placeReady = hasBlock && validSlotTicks >= 2;
 
         // OpenAdjust latches this: once the module has started placing, the rotation window is
         // what ends the aim, not a single tick without a block in hand.
@@ -493,7 +536,9 @@ public class Scaffold extends Module {
 
     private void updateBaseY(EntityPlayerSP player) {
         if (player.onGround || baseY > player.posY || currentMode().towering) {
-            if (preventsAscend) {
+            if (skipBaseYUpdate) {
+                skipBaseYUpdate = false;
+            } else if (preventsAscend) {
                 preventsAscend = false;
             } else {
                 baseY = MathHelper.floor_double(player.posY);
@@ -512,11 +557,10 @@ public class Scaffold extends Module {
         EntityPlayerSP player = mc.thePlayer;
         if (player == null) return false;
         boolean force = retainAirborne && noAscendActive && !player.onGround;
-        if (isTowerKeyDown()) return false;
-        if (options.isTower() && towerKeyOnGround) return false;
-        if (currentMode().isAboveBuildLimit(MathHelper.floor_double(player.posY))) return false;
-        if (!isMoving() && !force) return false;
-        return !player.isPotionActive(Potion.jump);
+        if (isJumpKeyDown()) return false;
+        // OpenAdjust: a bound key has to be held, an unbound one keeps no-ascend on for as
+        // long as the player is not jumping.
+        return options.isNoAscendKeyDown() || force || !options.noAscendBind.isBound();
     }
 
     private boolean canPlaceNow() {
@@ -550,7 +594,9 @@ public class Scaffold extends Module {
         }
         if (Float.isNaN(targetYaw) || Float.isNaN(targetPitch)) return;
 
-        float[] stepped = rotationModel().apply(aimYaw, aimPitch, targetYaw, targetPitch);
+        RotationModel model = currentMode().placeRotationModel();
+        if (model == null) model = rotationModel();
+        float[] stepped = model.apply(aimYaw, aimPitch, targetYaw, targetPitch);
         // Every look the server receives has to be a whole number of mouse counts from the
         // camera, or a rotation check reads the delta as synthetic. OpenAdjust snaps its
         // stepped rotation the same way before handing it to the packet.
@@ -565,6 +611,7 @@ public class Scaffold extends Module {
 
         RotationManager.request("Scaffold", CombatArbiter.PRIORITY_MOVEMENT,
                 aimYaw, aimPitch, SilentLook.MovementFix.NONE, false);
+        currentMode().onPostRotation();
     }
 
     private RotationModel rotationModel() {
@@ -790,7 +837,7 @@ public class Scaffold extends Module {
         if (slot < 0) return false;
         if (!force && !slotChanged) return false;
 
-        if (options.isSilentSwitch()) {
+        if (options.isClientsideSwap()) {
             // The server is told about the block slot while the client keeps showing the
             // item the player picked; the swap happens per placement, in executePlacement.
             if (!SlotSpoofer.active() || SlotSpoofer.serverSlot() != slot) SlotSpoofer.enable(slot);
@@ -873,7 +920,18 @@ public class Scaffold extends Module {
             player.sprintingTicksLeft = 0;
         }
 
-        currentMode().onTickStart(this, player);
+        if (!player.onGround) {
+            offGroundTicks++;
+        } else {
+            offGroundTicks = 0;
+            inputHeld = false;
+        }
+        if (inputHeld && player.movementInput != null) {
+            player.movementInput.moveForward = 0.0F;
+            player.movementInput.moveStrafe = 0.0F;
+        }
+
+        currentMode().onTickStart(player);
 
         if (noAscendActive && options.isAutoJump() && currentMode().canAutoJump()
                 && player.onGround && !isTowerKeyDown() && isMoving()
@@ -888,7 +946,7 @@ public class Scaffold extends Module {
         EntityPlayerSP player = mc.thePlayer;
         if (player == null || event.player != player) return;
 
-        currentMode().onTickEnd(this, player);
+        currentMode().onTickEnd(player);
 
         boolean block = placeReady && !currentMode().canSprint();
         sprintSuppressed = block;
@@ -921,8 +979,11 @@ public class Scaffold extends Module {
         lastPlacement = null;
         placeReady = false;
         rotating = false;
+        validSlotTicks = 0;
         ticksSincePlace = 100;
         offGroundTicks = 0;
+        inputHeld = false;
+        skipBaseYUpdate = false;
         towerKeyOnGround = false;
         targetYaw = Float.NaN;
         targetPitch = Float.NaN;
@@ -958,6 +1019,7 @@ public class Scaffold extends Module {
         lastPlacement = null;
         placeReady = false;
         rotating = false;
+        validSlotTicks = 0;
         placementFinder.solver().reset();
         placementScanner.lastResult = null;
         currentMode().reset();

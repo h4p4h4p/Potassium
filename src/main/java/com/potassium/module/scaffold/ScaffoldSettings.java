@@ -2,6 +2,7 @@ package com.potassium.module.scaffold;
 
 import com.potassium.module.Scaffold;
 import com.potassium.settings.BooleanSetting;
+import com.potassium.settings.KeySetting;
 import com.potassium.settings.ModeSetting;
 import com.potassium.settings.RangeSetting;
 import com.potassium.settings.Setting;
@@ -34,6 +35,7 @@ public final class ScaffoldSettings {
 
     private static final String ROTATIONS_GROUP = "Rotations";
     private static final String ADDONS_GROUP = "Addons";
+    private static final String CLIENTSIDE_GROUP = "Clientside";
     private static final String RENDER_GROUP = "Render";
     private static final String SAFE_WALK_GROUP = "Safe walk";
     private static final String SPRINT_GROUP = "Allow sprint";
@@ -58,10 +60,9 @@ public final class ScaffoldSettings {
     public final BooleanSetting stableYaw;
     public final BooleanSetting raycast;
     public final BooleanSetting swing;
+    public final BooleanSetting clientsideSwap;
     public final BooleanSetting changeSlot;
-    public final BooleanSetting silentSwitch;
     public final BooleanSetting waitForClick;
-    public final BooleanSetting blockPlacements;
     public final SliderSetting extend;
     public final BooleanSetting safeWalkEnabled;
     public final BooleanSetting safeWalkSneak;
@@ -70,22 +71,25 @@ public final class ScaffoldSettings {
     public final BooleanSetting allowSprint;
     public final BooleanSetting noAscendEnabled;
     public final ModeSetting noAscendMode;
+    public final KeySetting noAscendBind;
     public final BooleanSetting autoJump;
     public final BooleanSetting ascendOnJump;
     public final BooleanSetting towerEnabled;
+    public final KeySetting towerBind;
     public final ModeSetting towerMovement;
+    public final BooleanSetting blockPlacements;
 
     public ScaffoldSettings(Scaffold module) {
         this.module = module;
 
-        normal = new ScaffoldMode.Normal();
-        hypixel = new ScaffoldMode.Hypixel();
-        rewound = new ScaffoldMode.Rewound();
-        ncp = new ScaffoldMode.Ncp();
-        normal.attach(module);
-        hypixel.attach(module);
-        rewound.attach(module);
-        ncp.attach(module);
+        normal = new NormalScaffoldMode();
+        hypixel = new HypixelScaffoldMode();
+        rewound = new RewoundScaffoldMode();
+        ncp = new NcpScaffoldMode();
+        normal.attach(module, MODE_NORMAL, 62);
+        hypixel.attach(module, MODE_HYPIXEL, 14);
+        rewound.attach(module, MODE_REWOUND, 62);
+        ncp.attach(module, MODE_NCP, 62);
 
         mode = new ModeSetting("Mode",
                 new String[]{MODE_NORMAL, MODE_HYPIXEL, MODE_REWOUND, MODE_NCP}, 0);
@@ -105,11 +109,10 @@ public final class ScaffoldSettings {
         stableYaw = grouped(new BooleanSetting("Stable Yaw", true), ROTATIONS_GROUP);
         raycast = grouped(new BooleanSetting("Raycast", true), ROTATIONS_GROUP);
 
-        swing = grouped(new BooleanSetting("Swing", true), ADDONS_GROUP);
+        swing = grouped(new BooleanSetting("Swing", true), CLIENTSIDE_GROUP);
+        clientsideSwap = grouped(new BooleanSetting("Clientside Swap", false), CLIENTSIDE_GROUP);
         changeSlot = grouped(new BooleanSetting("Change Slot", true), ADDONS_GROUP);
-        silentSwitch = grouped(new BooleanSetting("Silent Switch", false), ADDONS_GROUP);
         waitForClick = grouped(new BooleanSetting("Wait for Click", false), ADDONS_GROUP);
-        blockPlacements = grouped(new BooleanSetting("Block Placements", false), RENDER_GROUP);
         extend = grouped(new SliderSetting("Extend", 0, 0, 3, 1), ADDONS_GROUP);
 
         safeWalkEnabled = grouped(new BooleanSetting("Safe Walk", false), SAFE_WALK_GROUP);
@@ -122,12 +125,16 @@ public final class ScaffoldSettings {
         noAscendEnabled = grouped(new BooleanSetting("No Ascend", false), NO_ASCEND_GROUP);
         noAscendMode = grouped(new ModeSetting("No Ascend Mode",
                 new String[]{NO_ASCEND_FLAT, NO_ASCEND_BUFFER}, 0), NO_ASCEND_GROUP);
+        noAscendBind = grouped(new KeySetting("No Ascend Bind", KeySetting.NONE), NO_ASCEND_GROUP);
         autoJump = grouped(new BooleanSetting("Auto Jump", true), NO_ASCEND_GROUP);
         ascendOnJump = grouped(new BooleanSetting("Ascend on Jump", true), NO_ASCEND_GROUP);
 
         towerEnabled = grouped(new BooleanSetting("Tower", false), TOWER_GROUP);
+        towerBind = grouped(new KeySetting("Tower Bind", KeySetting.NONE), TOWER_GROUP);
         towerMovement = grouped(new ModeSetting("Tower Movement",
                 new String[]{TOWER_NORMAL, TOWER_STOP, TOWER_CENTER}, 0), TOWER_GROUP);
+
+        blockPlacements = grouped(new BooleanSetting("Block Placements", false), RENDER_GROUP);
     }
 
     private <T extends Setting> T grouped(T setting, String group) {
@@ -178,17 +185,17 @@ public final class ScaffoldSettings {
         }
         if (setting == allowSprint) return mode().has(ScaffoldMode.CAP_SPRINT);
         if (setting == noAscendEnabled) return mode().has(ScaffoldMode.CAP_NO_ASCEND);
-        if (setting == noAscendMode || setting == autoJump || setting == ascendOnJump) {
+        if (setting == noAscendMode || setting == noAscendBind || setting == autoJump
+                || setting == ascendOnJump) {
             return noAscendEnabled.getValue() && mode().has(ScaffoldMode.CAP_NO_ASCEND);
         }
         if (setting == towerEnabled) return mode().has(ScaffoldMode.CAP_TOWER);
+        if (setting == towerBind) return towerEnabled.getValue();
         if (setting == towerMovement) {
             return towerEnabled.getValue() && mode().has(ScaffoldMode.CAP_TOWER_MOVEMENT);
         }
-        if (setting == extend) {
-            return !mode().has(ScaffoldMode.CAP_EXTEND) || mode() instanceof ScaffoldMode.Rewound;
-        }
-        if (setting == silentSwitch) return changeSlot.getValue();
+        if (setting == extend) return mode().has(ScaffoldMode.CAP_EXTEND);
+        if (setting == clientsideSwap) return changeSlot.getValue();
         return true;
     }
 
@@ -212,24 +219,28 @@ public final class ScaffoldSettings {
         return raycast.getValue();
     }
 
+    /** OpenAdjust's clientside swing: the client does the swing, not the placement packet. */
     public boolean isSwing() {
         return swing.getValue();
+    }
+
+    public boolean isClientsideSwap() {
+        return changeSlot.getValue() && clientsideSwap.getValue();
     }
 
     public boolean isChangeSlot() {
         return changeSlot.getValue();
     }
 
-    /** True when the switch is client-side and the server keeps the block slot. */
+    /** Kept for the placement code's older name for the clientside swap. */
     public boolean isSilentSwitch() {
-        return changeSlot.getValue() && silentSwitch.getValue();
+        return isClientsideSwap();
     }
 
     public boolean isWaitForClick() {
         return waitForClick.getValue();
     }
 
-    /** OpenAdjust's block placement render: the placed cell and the clicked block. */
     public boolean isBlockPlacements() {
         return blockPlacements.getValue();
     }
@@ -244,8 +255,8 @@ public final class ScaffoldSettings {
 
     public double getExtend() {
         if (!mode().has(ScaffoldMode.CAP_EXTEND)) return 0.0D;
-        if (mode() instanceof ScaffoldMode.Rewound) {
-            return mode().isTowerActive() && isTowerKeyDown() ? 2.0D : 1.0D;
+        if (mode() instanceof RewoundScaffoldMode) {
+            return isTower() && isTowerKeyDown() ? 2.0D : 1.0D;
         }
         return extend.getValue();
     }
@@ -278,6 +289,10 @@ public final class ScaffoldSettings {
         return noAscendMode.getValue();
     }
 
+    public boolean isNoAscendKeyDown() {
+        return noAscendBind.isDown();
+    }
+
     public boolean isAutoJump() {
         return autoJump.getValue();
     }
@@ -291,7 +306,8 @@ public final class ScaffoldSettings {
     }
 
     public boolean isTowerKeyDown() {
-        return module.isTowerKeyDown();
+        if (towerBind.isBound()) return towerBind.isDown();
+        return module.isJumpKeyDown();
     }
 
     public String getTowerMovement() {

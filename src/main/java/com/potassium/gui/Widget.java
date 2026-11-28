@@ -2,6 +2,7 @@ package com.potassium.gui;
 
 import com.potassium.settings.BooleanSetting;
 import com.potassium.settings.ColorSetting;
+import com.potassium.settings.KeySetting;
 import com.potassium.settings.ModeSetting;
 import com.potassium.settings.RangeSetting;
 import com.potassium.settings.SelectSetting;
@@ -47,6 +48,7 @@ public abstract class Widget {
         if (setting instanceof ColorSetting) return new ColorWidget((ColorSetting) setting);
         if (setting instanceof StringSetting) return new StringWidget((StringSetting) setting);
         if (setting instanceof SelectSetting) return new SelectWidget((SelectSetting) setting);
+        if (setting instanceof KeySetting) return new KeyWidget((KeySetting) setting);
         return null;
     }
 
