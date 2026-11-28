@@ -2,8 +2,7 @@
 * Use % for chat CMDS
 * Check Releases for Potassium jars and srcs.
 * Only runs with Forge 1.8.9
-* Don't ask for an injectable version please.
-
+* NCP bypasses aren't that good yet, don't trust my Vulcan bypasses either. I just based them off opensource versions.
 ## Building
 
 Requirements: **JDK 8** and **Gradle 4.10.x**. ForgeGradle 2.1 does not run on newer Gradle,
