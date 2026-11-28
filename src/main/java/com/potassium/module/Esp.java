@@ -26,11 +26,12 @@ import java.util.Arrays;
 import java.util.List;
 
 /**
- * Player boxes in 2D or 3D, with optional tracers from the bottom of the screen.
+ * Player boxes in 2D or 3D.
  *
- * <p>The 2D and tracer passes share the projection captured during the world render, so
- * their positions are the same points the world boxes were built from. Names and the old
- * visibility-limited LegitESP mode have been removed; vanilla nametags are left alone.</p>
+ * <p>The 2D pass projects the points captured during the world render into boxes, and the 3D
+ * pass draws the hitbox itself. Tracers used to be a switch in here and now have their own
+ * module, so either can be used without the other. Names and the old visibility-limited
+ * LegitESP mode have been removed; vanilla nametags are left alone.</p>
  */
 public class Esp extends Module {
 
@@ -46,10 +47,7 @@ public class Esp extends Module {
     private final ModeSetting modeSetting = new ModeSetting("Mode",
             new String[]{MODE_2D, MODE_3D}, 1);
     private final BooleanSetting cornersSetting = new BooleanSetting("Corners", false);
-    private final BooleanSetting tracersSetting = new BooleanSetting("Tracers", false);
     private final ColorSetting colorSetting = new ColorSetting("Color", 0xFF1B395C);
-    private final ColorSetting tracerColorSetting =
-            new ColorSetting("Tracer Color", 0xFFF0A612);
     private final BooleanSetting throughWallsSetting = new BooleanSetting("Through Walls", true);
     private final SliderSetting rangeSetting = new SliderSetting("Range", 64, 8, 256, 1);
 
@@ -71,17 +69,11 @@ public class Esp extends Module {
     private float[] quadBuf = new float[512];
     private int quadCount;
 
-    private float[] tracerXs = new float[64];
-    private float[] tracerYs = new float[64];
-    private int tracerCount;
-
     public Esp() {
         super("ESP", Category.RENDER);
         settings.add(modeSetting);
         settings.add(cornersSetting);
-        settings.add(tracersSetting);
         settings.add(colorSetting);
-        settings.add(tracerColorSetting);
         settings.add(throughWallsSetting);
         settings.add(rangeSetting);
         MinecraftForge.EVENT_BUS.register(this);
@@ -90,7 +82,6 @@ public class Esp extends Module {
     @Override
     public boolean isSettingVisible(Setting setting) {
         if (setting == cornersSetting) return MODE_2D.equals(modeSetting.getValue());
-        if (setting == tracerColorSetting) return tracersSetting.getValue();
         if (setting == throughWallsSetting) return MODE_3D.equals(modeSetting.getValue());
         return true;
     }
@@ -108,10 +99,12 @@ public class Esp extends Module {
         if (!isEnabled()) return;
         if (mc.thePlayer == null || mc.theWorld == null) return;
         quadCount = 0;
-        tracerCount = 0;
-        if (!captureMatrices()) return;
-        collect2D(event.partialTicks);
-        if (MODE_3D.equals(modeSetting.getValue())) render3D(event.partialTicks);
+        if (MODE_2D.equals(modeSetting.getValue())) {
+            if (!captureMatrices()) return;
+            collect2D(event.partialTicks);
+        } else {
+            render3D(event.partialTicks);
+        }
     }
 
     @SubscribeEvent
@@ -121,7 +114,6 @@ public class Esp extends Module {
         if (quadCount > 0) {
             RenderUtil.drawBatchedRects(quadBuf, quadCount, colorSetting.getValue());
         }
-        drawTracers();
     }
 
     /**
@@ -200,34 +192,10 @@ public class Esp extends Module {
         return scale > 0;
     }
 
-    private void storeTracer(double screenX, double screenY) {
-        if (tracerCount == tracerXs.length) {
-            tracerXs = Arrays.copyOf(tracerXs, tracerCount * 2);
-            tracerYs = Arrays.copyOf(tracerYs, tracerCount * 2);
-        }
-        tracerXs[tracerCount] = (float) (screenX / scale);
-        tracerYs[tracerCount] = (float) ((vh - screenY) / scale);
-        tracerCount++;
-    }
-
-    private void drawTracers() {
-        if (tracerCount == 0) return;
-        ScaledResolution sr = new ScaledResolution(mc);
-        float originX = sr.getScaledWidth() / 2f;
-        float originY = sr.getScaledHeight();
-        int color = tracerColorSetting.getValue();
-        for (int i = 0; i < tracerCount; i++) {
-            RenderUtil.drawLine(originX, originY, tracerXs[i], tracerYs[i], 1.5f, color);
-        }
-        tracerCount = 0;
-    }
-
     private void collect2D(float partialTicks) {
         double camX = mc.getRenderManager().viewerPosX;
         double camY = mc.getRenderManager().viewerPosY;
         double camZ = mc.getRenderManager().viewerPosZ;
-        boolean showTracers = tracersSetting.getValue();
-
         List<EntityPlayer> players = mc.theWorld.playerEntities;
         for (int i = 0; i < players.size(); i++) {
             Entity entity = players.get(i);
@@ -259,8 +227,7 @@ public class Esp extends Module {
             float rw = (float) (w / scale);
             float rh = (float) (h / scale);
 
-            if (MODE_2D.equals(modeSetting.getValue())) addRect(x, y, rw, rh);
-            if (showTracers) storeTracer(headScratch[0], headScratch[1]);
+            addRect(x, y, rw, rh);
         }
     }
 
@@ -350,6 +317,5 @@ public class Esp extends Module {
     @Override
     public void onDisable() {
         quadCount = 0;
-        tracerCount = 0;
     }
 }

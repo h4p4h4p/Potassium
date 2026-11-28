@@ -64,6 +64,10 @@ public class KillAura extends Module {
     public static final String ROTATION_LOCK_VIEW = "Lock View";
     public static final String ROTATION_SILENT = "Silent";
 
+    public static final String AIM_POINT_HEAD = "Head";
+    public static final String AIM_POINT_BODY = "Body";
+    public static final String AIM_POINT_LEGS = "Legs";
+
     public static final String PRIORITY_SMART = "Smart";
     public static final String PRIORITY_DAMAGE = "Damage";
     public static final String PRIORITY_HEALTH = "Health";
@@ -96,6 +100,9 @@ public class KillAura extends Module {
             new String[]{ROTATION_LOCK_VIEW, ROTATION_SILENT}, 1);
     private final ModeSetting prioritySetting = new ModeSetting("Priority",
             new String[]{PRIORITY_SMART, PRIORITY_DAMAGE, PRIORITY_HEALTH, PRIORITY_DISTANCE}, 0);
+    /** Where on the target's box the aim goes; the height fractions live with aimPoint(). */
+    private final ModeSetting aimPointSetting = new ModeSetting("Aim Points",
+            new String[]{AIM_POINT_HEAD, AIM_POINT_BODY, AIM_POINT_LEGS}, 1);
     private final SliderSetting rangeSetting = new SliderSetting("Range", 4.5, 1.0, 6.0, 0.1);
     private final SliderSetting targetsSetting = new SliderSetting("Targets", 1, 1, 4, 1);
     private final SliderSetting reachSetting = new SliderSetting("Reach", 3.0, 1.0, 4.5, 0.1);
@@ -210,6 +217,7 @@ public class KillAura extends Module {
         onMouseDownSetting.setGroup(BLOCKING_GROUP);
         settings.add(rotationSetting);
         settings.add(prioritySetting);
+        settings.add(aimPointSetting);
         settings.add(targetsSetting);
         settings.add(rangeSetting);
         settings.add(reachSetting);
@@ -1144,10 +1152,21 @@ public class KillAura extends Module {
     }
 
     /**
-     * The point the aim goes to: the box centre at 82.5% height, the same point Raven aims
-     * at, and only if that point is actually visible. A hit aimed through a wall is one the
-     * server cannot reproduce, so the fallback is the closest point of the box the eye can
-     * see, and null when nothing on the box is exposed.
+     * Height up the target's box each Aim Points option aims at, as a fraction of the box.
+     * Head sits at eye level, Body on the chest and Legs at the bottom of the hitbox.
+     */
+    private double aimFraction() {
+        String mode = aimPointSetting.getValue();
+        if (AIM_POINT_HEAD.equals(mode)) return 0.92D;
+        if (AIM_POINT_LEGS.equals(mode)) return 0.25D;
+        return 0.75D;
+    }
+
+    /**
+     * The point the aim goes to: the box centre at the configured Aim Points height, and only
+     * if that point is actually visible. A hit aimed through a wall is one the server cannot
+     * reproduce, so the fallback is the closest point of the box the eye can see, and null
+     * when nothing on the box is exposed.
      */
     private Vec3 aimPoint(EntityLivingBase target) {
         return aimPoint(target, 1.0F);
@@ -1161,7 +1180,7 @@ public class KillAura extends Module {
         if (box.isVecInside(eyes)) return eyes;
 
         Vec3 centre = new Vec3((box.minX + box.maxX) / 2.0D,
-                box.minY + (box.maxY - box.minY) * 0.825D, (box.minZ + box.maxZ) / 2.0D);
+                box.minY + (box.maxY - box.minY) * aimFraction(), (box.minZ + box.maxZ) / 2.0D);
         if (clearLine(eyes, centre)) return centre;
 
         Vec3 closest = new Vec3(

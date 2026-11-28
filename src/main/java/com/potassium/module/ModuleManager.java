@@ -33,6 +33,7 @@ public class ModuleManager {
         modules.add(new AntiKnockback());
         modules.add(new Backtrack());
         modules.add(new Esp());
+        modules.add(new Tracers());
         modules.add(new TargetHud());
         modules.add(new StorageESP());
         modules.add(new Scoreboard());

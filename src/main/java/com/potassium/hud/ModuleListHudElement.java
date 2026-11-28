@@ -29,6 +29,18 @@ public class ModuleListHudElement extends HudElement {
      */
     private int rightEdge = Integer.MIN_VALUE;
 
+    /**
+     * Rows and their measured width, rebuilt once a tick instead of once per read.
+     *
+     * <p>One frame asks for the list four times (visibility, width, height and the draw
+     * itself), and every one of those walked the modules and measured every row with the font.
+     * The list can only change when a module is toggled or a HUD setting moves, so a tick is
+     * the right refresh interval: a toggle shows up on the next frame either way.</p>
+     */
+    private List<Row> cachedRows;
+    private int cachedWidth = -1;
+    private int cachedHeight = -1;
+
     public ModuleListHudElement() {
         // No stored edge until the user drags it: the default follows the right screen edge.
         y = 2;
@@ -77,20 +89,33 @@ public class ModuleListHudElement extends HudElement {
         return getX();
     }
 
+    /** Drops the cached rows; the HUD calls this once per tick. */
+    public void invalidateCache() {
+        cachedRows = null;
+        cachedWidth = -1;
+        cachedHeight = -1;
+    }
+
     @Override
     public int getWidth() {
-        int widest = 0;
-        for (Row row : rows()) {
-            widest = Math.max(widest, RenderUtil.getGuiTextWidthInt(row.text()));
+        if (cachedWidth < 0) {
+            int widest = 0;
+            for (Row row : rows()) {
+                widest = Math.max(widest, RenderUtil.getGuiTextWidthInt(row.text()));
+            }
+            cachedWidth = widest;
         }
-        return widest;
+        return cachedWidth;
     }
 
     @Override
     public int getHeight() {
-        int count = rows().size();
-        if (count == 0) return 0;
-        return count * (RenderUtil.getGuiTextHeightInt() + LINE_GAP) - LINE_GAP;
+        if (cachedHeight < 0) {
+            int count = rows().size();
+            cachedHeight = count == 0 ? 0
+                    : count * (RenderUtil.getGuiTextHeightInt() + LINE_GAP) - LINE_GAP;
+        }
+        return cachedHeight;
     }
 
     @Override
@@ -122,6 +147,7 @@ public class ModuleListHudElement extends HudElement {
     }
 
     private List<Row> rows() {
+        if (cachedRows != null) return cachedRows;
         if (Potassium.INSTANCE == null || Potassium.INSTANCE.moduleManager == null) {
             return Collections.emptyList();
         }
@@ -137,7 +163,9 @@ public class ModuleListHudElement extends HudElement {
         // Adjust's list is widest-first, and equal widths keep registration order (stable sort).
         rows.sort((a, b) -> Float.compare(RenderUtil.getGuiTextWidth(b.text()),
                 RenderUtil.getGuiTextWidth(a.text())));
-        return rows;
+        List<Row> built = Collections.unmodifiableList(rows);
+        cachedRows = built;
+        return built;
     }
 
     private HUD hudModule() {

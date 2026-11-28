@@ -186,6 +186,9 @@ public class HudManager {
     public void onClientTick(TickEvent.ClientTickEvent event) {
         if (event.phase != TickEvent.Phase.END) return;
 
+        // The module list measures its rows once per tick; see ModuleListHudElement.
+        moduleList.invalidateCache();
+
         EntityPlayerSP player = mc.thePlayer;
         if (player == null || mc.theWorld == null) {
             resetBps();

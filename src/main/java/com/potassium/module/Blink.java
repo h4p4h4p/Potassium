@@ -249,6 +249,12 @@ public class Blink extends Module {
         // A volatile read here keeps the client thread's tick from ever needing to touch it.
         private boolean holding = true;
         private long cycleEnd;
+        /** Wall-clock start of the packets currently held, 0 when the hold is empty. */
+        private volatile long holdStartedAt;
+
+        long holdStartedAt() {
+            return holdStartedAt;
+        }
 
         /** Pulse cycle boundary. Runs on the event loop, so the drain cannot race a live write. */
         void pulse(long delay) {
@@ -267,6 +273,7 @@ public class Blink extends Module {
         void rearm(long delay) {
             holding = true;
             cycleEnd = System.currentTimeMillis() + delay;
+            holdStartedAt = 0L;
         }
 
         private boolean pulseHoldsInbound() {
@@ -295,6 +302,7 @@ public class Blink extends Module {
         public void channelRead(ChannelHandlerContext ctx, Object msg) throws Exception {
             savedCtx = ctx;
             if (!flushing && holdsInbound() && msg instanceof Packet) {
+                if (holdStartedAt == 0L) holdStartedAt = System.currentTimeMillis();
                 inbound.add((Packet) msg);
                 return;
             }
@@ -305,6 +313,7 @@ public class Blink extends Module {
         public void write(ChannelHandlerContext ctx, Object msg, ChannelPromise promise) throws Exception {
             savedCtx = ctx;
             if (!flushing && holdsOutbound() && msg instanceof C03PacketPlayer) {
+                if (holdStartedAt == 0L) holdStartedAt = System.currentTimeMillis();
                 outbound.add((Packet) msg);
                 promise.setSuccess();
                 return;
@@ -321,6 +330,7 @@ public class Blink extends Module {
         private void drain() {
             ChannelHandlerContext ctx = savedCtx;
             if (ctx == null) return;
+            holdStartedAt = 0L;
             flushing = true;
             try {
                 Packet p;
@@ -332,8 +342,20 @@ public class Blink extends Module {
         }
     }
 
+    /**
+     * How long the current hold has lasted, in ticks, as the module list tag. It reads the
+     * moment the first packet was buffered and clears again when the hold drains, so the row
+     * reads "Blink 16" after sixteen ticks of held packets and drops back to "Blink" between
+     * pulses. Nothing is shown before a full tick has passed: "Blink 0" would just flicker on
+     * every packet.
+     */
     @Override
     public String getTag() {
-        return modeSetting.getValue();
+        NetworkHandler h = handler;
+        if (!isEnabled() || h == null) return null;
+        long started = h.holdStartedAt();
+        if (started <= 0L) return null;
+        long ticks = (System.currentTimeMillis() - started) / 50L;
+        return ticks <= 0L ? null : Long.toString(ticks);
     }
 }
