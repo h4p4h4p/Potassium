@@ -14,11 +14,14 @@ import com.potassium.util.CombatArbiter;
 import com.potassium.util.InventoryStateTracker;
 import com.potassium.util.RotationManager;
 import com.potassium.util.RotationUtil;
+import com.potassium.util.RenderUtil;
 import com.potassium.util.SilentLook;
 import com.potassium.util.SlotSpoofer;
 import net.minecraft.block.Block;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.entity.EntityPlayerSP;
+import net.minecraft.client.renderer.GlStateManager;
+import net.minecraft.client.renderer.Tessellator;
 import net.minecraft.client.settings.KeyBinding;
 import net.minecraft.init.Blocks;
 import net.minecraft.item.ItemBlock;
@@ -33,12 +36,14 @@ import net.minecraft.util.MovingObjectPosition;
 import net.minecraft.util.Vec3;
 import net.minecraft.world.WorldSettings;
 import net.minecraftforge.client.event.MouseEvent;
+import net.minecraftforge.client.event.RenderWorldLastEvent;
 import net.minecraftforge.common.MinecraftForge;
 import net.minecraftforge.fml.common.eventhandler.EventPriority;
 import net.minecraftforge.fml.common.eventhandler.SubscribeEvent;
 import net.minecraftforge.fml.common.gameevent.TickEvent;
 import net.minecraftforge.fml.relauncher.ReflectionHelper;
 import org.lwjgl.input.Keyboard;
+import org.lwjgl.opengl.GL11;
 
 import java.lang.reflect.Field;
 import java.util.ArrayList;
@@ -116,7 +121,14 @@ public class Scaffold extends Module {
     private Field rightClickDelayField;
     private long nextClickTime;
     private boolean sprintKeySuppressed;
+    /** OpenAdjust's render anchors: the cell placed into, and the block that was clicked. */
+    private BlockPos lastPlaceBox;
+    private BlockPos lastPlacePos;
     private static boolean sprintSuppressed;
+
+    /** OpenAdjust's placement colours: the block placed, and the block that was clicked. */
+    private static final int PLACED_COLOR = 0x3CC87820;
+    private static final int CLICKED_COLOR = 0x3C0ADC20;
 
     public Scaffold() {
         super("Scaffold", Category.MOVEMENT);
@@ -433,22 +445,28 @@ public class Scaffold extends Module {
         boolean hasBlock = selectBlock(nearGround);
         placeReady = hasBlock;
 
-        rotating = placeReady;
+        // OpenAdjust latches this: once the module has started placing, the rotation window is
+        // what ends the aim, not a single tick without a block in hand.
+        if (placeReady) rotating = true;
         if (placeReady) {
             safeWalk.update(ground);
             if (canPlaceNow() && ground != null && ground <= options.getExtend()) {
                 placement = placementScanner.lastResult;
-                if (placement != null) lastPlacement = placement;
+                if (placement != null) {
+                    lastPlacement = placement;
+                    lastPlacePos = placement.pos;
+                    lastPlaceBox = placement.placedPos;
+                }
             }
         } else {
             safeWalk.update(null);
         }
 
-        if (placeReady && isRotationWindowActive() && options.isRotationsEnabled()) {
+        // The window stays open for a few ticks after the last placement, and the aim is kept
+        // through it even when this tick has nothing to click, so the view is never pulled back
+        // to the camera between two blocks.
+        if (isRotationWindowActive() && options.isRotationsEnabled()) {
             rotate(player);
-        } else {
-            aimYaw = Float.NaN;
-            aimPitch = Float.NaN;
         }
 
         // Raycast is the safety gate: with it on, the rotation the server already holds must
@@ -518,13 +536,19 @@ public class Scaffold extends Module {
             aimYaw = SilentLook.cameraYaw();
             aimPitch = SilentLook.cameraPitch();
         }
+
+        // The aim only ever moves to a placement. When nothing new has been solved this tick,
+        // the last solved placement stays the target, so the body keeps looking at the spot the
+        // next block will go instead of turning back to wherever the player is looking.
         if (aimTarget != null) {
             targetYaw = aimTarget.yaw;
             targetPitch = aimTarget.pitch;
-        } else {
+        } else if (Float.isNaN(targetYaw) || Float.isNaN(targetPitch)) {
+            // Nothing has been solved yet in this window: start the turn from the camera once.
             targetYaw = SilentLook.cameraYaw();
             targetPitch = SilentLook.cameraPitch();
         }
+        if (Float.isNaN(targetYaw) || Float.isNaN(targetPitch)) return;
 
         float[] stepped = rotationModel().apply(aimYaw, aimPitch, targetYaw, targetPitch);
         // Every look the server receives has to be a whole number of mouse counts from the
@@ -539,8 +563,7 @@ public class Scaffold extends Module {
             if (Math.abs(aimPitch - targetPitch) < 0.5F) aimPitch = targetPitch;
         }
 
-        RotationManager.request("Scaffold",
-                aimTarget != null ? CombatArbiter.PRIORITY_MOVEMENT : CombatArbiter.PRIORITY_RETURN,
+        RotationManager.request("Scaffold", CombatArbiter.PRIORITY_MOVEMENT,
                 aimYaw, aimPitch, SilentLook.MovementFix.NONE, false);
     }
 
@@ -693,6 +716,54 @@ public class Scaffold extends Module {
             rightClickDelayField.setInt(mc, delay);
         } catch (Exception ignored) {
         }
+    }
+
+    // ---- Render -------------------------------------------------------------
+
+    /**
+     * OpenAdjust's block placement render: the cell the last block went into, and the block
+     * that was clicked to place it, each drawn as a filled unit cube with an outline.
+     */
+    @SubscribeEvent
+    public void onRenderWorld(RenderWorldLastEvent event) {
+        if (!isEnabled() || !options.isBlockPlacements()) return;
+        if (lastPlaceBox == null || lastPlacePos == null) return;
+        if (mc.theWorld == null || mc.getRenderManager() == null) return;
+
+        double viewX = mc.getRenderManager().viewerPosX;
+        double viewY = mc.getRenderManager().viewerPosY;
+        double viewZ = mc.getRenderManager().viewerPosZ;
+
+        GlStateManager.disableTexture2D();
+        GlStateManager.enableBlend();
+        GlStateManager.tryBlendFuncSeparate(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA, 1, 0);
+        GlStateManager.disableDepth();
+        GlStateManager.disableCull();
+        GL11.glEnable(GL11.GL_LINE_SMOOTH);
+
+        Tessellator tessellator = Tessellator.getInstance();
+        drawCell(tessellator, lastPlaceBox, viewX, viewY, viewZ, PLACED_COLOR);
+        drawCell(tessellator, lastPlacePos, viewX, viewY, viewZ, CLICKED_COLOR);
+
+        GL11.glDisable(GL11.GL_LINE_SMOOTH);
+        GlStateManager.enableCull();
+        GlStateManager.enableDepth();
+        GlStateManager.disableBlend();
+        GlStateManager.enableTexture2D();
+    }
+
+    private void drawCell(Tessellator tessellator, BlockPos pos,
+                          double viewX, double viewY, double viewZ, int color) {
+        double x = pos.getX() - viewX;
+        double y = pos.getY() - viewY;
+        double z = pos.getZ() - viewZ;
+        int r = (color >> 16) & 0xFF;
+        int g = (color >> 8) & 0xFF;
+        int b = color & 0xFF;
+        int a = (color >>> 24) & 0xFF;
+        RenderUtil.drawFilledBox(tessellator, x, y, z, x + 1.0D, y + 1.0D, z + 1.0D, r, g, b, a);
+        RenderUtil.drawOutlinedBox(tessellator,
+                new AxisAlignedBB(x, y, z, x + 1.0D, y + 1.0D, z + 1.0D), r, g, b, a);
     }
 
     @SubscribeEvent
@@ -860,6 +931,8 @@ public class Scaffold extends Module {
         firstTurn = true;
         rotationJitter = 0.0F;
         if (SlotSpoofer.active()) SlotSpoofer.disable();
+        lastPlaceBox = null;
+        lastPlacePos = null;
         originalSlot = -1;
         slotChanged = false;
         nextClickTime = 0L;

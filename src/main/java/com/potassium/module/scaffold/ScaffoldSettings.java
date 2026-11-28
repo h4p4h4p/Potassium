@@ -34,6 +34,7 @@ public final class ScaffoldSettings {
 
     private static final String ROTATIONS_GROUP = "Rotations";
     private static final String ADDONS_GROUP = "Addons";
+    private static final String RENDER_GROUP = "Render";
     private static final String SAFE_WALK_GROUP = "Safe walk";
     private static final String SPRINT_GROUP = "Allow sprint";
     private static final String NO_ASCEND_GROUP = "No ascend";
@@ -60,6 +61,7 @@ public final class ScaffoldSettings {
     public final BooleanSetting changeSlot;
     public final BooleanSetting silentSwitch;
     public final BooleanSetting waitForClick;
+    public final BooleanSetting blockPlacements;
     public final SliderSetting extend;
     public final BooleanSetting safeWalkEnabled;
     public final BooleanSetting safeWalkSneak;
@@ -107,6 +109,7 @@ public final class ScaffoldSettings {
         changeSlot = grouped(new BooleanSetting("Change Slot", true), ADDONS_GROUP);
         silentSwitch = grouped(new BooleanSetting("Silent Switch", false), ADDONS_GROUP);
         waitForClick = grouped(new BooleanSetting("Wait for Click", false), ADDONS_GROUP);
+        blockPlacements = grouped(new BooleanSetting("Block Placements", false), RENDER_GROUP);
         extend = grouped(new SliderSetting("Extend", 0, 0, 3, 1), ADDONS_GROUP);
 
         safeWalkEnabled = grouped(new BooleanSetting("Safe Walk", false), SAFE_WALK_GROUP);
@@ -224,6 +227,11 @@ public final class ScaffoldSettings {
 
     public boolean isWaitForClick() {
         return waitForClick.getValue();
+    }
+
+    /** OpenAdjust's block placement render: the placed cell and the clicked block. */
+    public boolean isBlockPlacements() {
+        return blockPlacements.getValue();
     }
 
     public int getCpsLow() {
