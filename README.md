@@ -1,5 +1,6 @@
 !! Mod by AL3XMABAH0
 !! Use % for chat CMDS
+!! Check Releases for Potassium jars and srcs.
 
 ## Building
 
