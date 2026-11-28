@@ -5,10 +5,12 @@ import com.potassium.settings.ModeSetting;
 import com.potassium.settings.RangeSetting;
 import com.potassium.settings.Setting;
 import com.potassium.settings.SliderSetting;
+import com.potassium.mixin.MinecraftAccessor;
 import com.potassium.util.BlinkBlockQueue;
 import com.potassium.util.ClickState;
 import com.potassium.util.CombatArbiter;
 import com.potassium.util.Friends;
+import com.potassium.util.RotationManager;
 import com.potassium.util.RotationSmoother;
 import com.potassium.util.RotationUtil;
 import com.potassium.util.SilentLook;
@@ -162,9 +164,6 @@ public class KillAura extends Module {
     /** True while a silent aim is being eased back to the camera after the last target. */
     private boolean returning;
     private int returnTicks;
-    private float sentYaw;
-    private float sentPitch;
-    private boolean sentInitialised;
     /** State of the sword block the aura started, so it can release exactly that block. */
     private boolean autoBlockActive;
     private String autoBlockMode;
@@ -360,9 +359,9 @@ public class KillAura extends Module {
      * box the server traces, which is what an impossible-hit check reports.
      */
     private boolean canAttack(EntityLivingBase target) {
-        if (!sentInitialised) return false;
+        if (!RotationManager.hasServerRotation()) return false;
         if (!ClickState.canAttack(mc.thePlayer.ticksExisted)) return false;
-        return rayHits(target, sentYaw, sentPitch);
+        return rayHits(target, RotationManager.serverYaw(), RotationManager.serverPitch());
     }
 
     /** Sword right-click block; Stop on Block pauses attacks instead of releasing it. */
@@ -724,18 +723,11 @@ public class KillAura extends Module {
         return block.hitVec.squareDistanceTo(eyes) >= hit.hitVec.squareDistanceTo(eyes) - 1.0E-4D;
     }
 
-    /** Records the rotation this tick's movement packet carried. */
-    @SubscribeEvent(priority = EventPriority.HIGHEST)
-    public void onTickEnd(TickEvent.ClientTickEvent event) {
-        if (event.phase != TickEvent.Phase.END) return;
-        if (mc.thePlayer == null) return;
-        sentYaw = mc.thePlayer.rotationYaw;
-        sentPitch = mc.thePlayer.rotationPitch;
-        sentInitialised = true;
-    }
-
     /** Minecraft.timer is private; accept both the MCP and SRG field names. */
     private float renderPartialTicks() {
+        if (clientTimer == null && mc instanceof MinecraftAccessor) {
+            clientTimer = ((MinecraftAccessor) mc).potassium$timer();
+        }
         if (clientTimer == null) {
             clientTimer = ReflectionHelper.getPrivateValue(Minecraft.class, mc,
                     "timer", "field_71428_T");
@@ -917,8 +909,10 @@ public class KillAura extends Module {
         if (!aimInitialised) {
             // Start from the rotation the server already holds, so the first look is a turn
             // rather than a jump.
-            aim.reset(sentInitialised ? sentYaw : mc.thePlayer.rotationYaw,
-                    sentInitialised ? sentPitch : mc.thePlayer.rotationPitch);
+            aim.reset(RotationManager.hasServerRotation() ? RotationManager.serverYaw()
+                            : mc.thePlayer.rotationYaw,
+                    RotationManager.hasServerRotation() ? RotationManager.serverPitch()
+                            : mc.thePlayer.rotationPitch);
             aimInitialised = true;
         }
         if (isLegitSmoothing()) {
@@ -1042,12 +1036,9 @@ public class KillAura extends Module {
      * placement, while easing back to the camera yields to both.
      */
     private void requestSilentAim(int priority) {
-        float yaw = aim.yaw();
-        float pitch = aim.pitch();
-        float baseYaw = sentInitialised ? sentYaw : yaw;
-        float basePitch = sentInitialised ? sentPitch : pitch;
-        float[] snapped = RotationUtil.snapToMouse(yaw, pitch, baseYaw, basePitch);
-        SilentLook.request("KillAura", priority, snapped[0], snapped[1], movementFix());
+        // The manager snaps this aim onto the mouse grid from the rotation the server already
+        // holds, so the packet's delta is a whole mouse count.
+        RotationManager.request("KillAura", priority, aim.yaw(), aim.pitch(), movementFix(), true);
     }
 
     /**
@@ -1265,7 +1256,6 @@ public class KillAura extends Module {
         targets.clear();
         targetIndex = 0;
         clickBudget = 1.0D;
-        sentInitialised = false;
         lastBlinkHealth = -1.0F;
         lastBlinkDamageTick = -1;
         blinkBlockHoldTicks = BLINK_BLOCK_TICKS;

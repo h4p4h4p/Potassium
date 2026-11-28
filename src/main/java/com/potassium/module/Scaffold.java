@@ -8,10 +8,14 @@ import com.potassium.module.scaffold.SafeWalk;
 import com.potassium.module.scaffold.ScaffoldMode;
 import com.potassium.module.scaffold.ScaffoldSettings;
 import com.potassium.settings.Setting;
+import com.potassium.mixin.MinecraftAccessor;
 import com.potassium.util.ClickState;
 import com.potassium.util.CombatArbiter;
+import com.potassium.util.InventoryStateTracker;
+import com.potassium.util.RotationManager;
 import com.potassium.util.RotationUtil;
 import com.potassium.util.SilentLook;
+import com.potassium.util.SlotSpoofer;
 import net.minecraft.block.Block;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.entity.EntityPlayerSP;
@@ -112,9 +116,6 @@ public class Scaffold extends Module {
     private Field rightClickDelayField;
     private long nextClickTime;
     private boolean sprintKeySuppressed;
-    /** The rotation the last movement packet carried; the server checks a click against it. */
-    private float serverYaw = Float.NaN;
-    private float serverPitch = Float.NaN;
     private static boolean sprintSuppressed;
 
     public Scaffold() {
@@ -538,9 +539,9 @@ public class Scaffold extends Module {
             if (Math.abs(aimPitch - targetPitch) < 0.5F) aimPitch = targetPitch;
         }
 
-        SilentLook.request("Scaffold",
+        RotationManager.request("Scaffold",
                 aimTarget != null ? CombatArbiter.PRIORITY_MOVEMENT : CombatArbiter.PRIORITY_RETURN,
-                aimYaw, aimPitch, SilentLook.MovementFix.NONE);
+                aimYaw, aimPitch, SilentLook.MovementFix.NONE, false);
     }
 
     private RotationModel rotationModel() {
@@ -582,8 +583,10 @@ public class Scaffold extends Module {
      * its placement check uses. A ray from that rotation must land on the face being clicked.
      */
     private boolean serverAimReaches(EntityPlayerSP player, PlacementTarget target) {
-        float yaw = Float.isNaN(serverYaw) ? player.rotationYaw : serverYaw;
-        float pitch = Float.isNaN(serverPitch) ? player.rotationPitch : serverPitch;
+        float yaw = RotationManager.hasServerRotation()
+                ? RotationManager.serverYaw() : player.rotationYaw;
+        float pitch = RotationManager.hasServerRotation()
+                ? RotationManager.serverPitch() : player.rotationPitch;
         return rayHits(player, yaw, pitch, target.pos, target.facing);
     }
 
@@ -621,23 +624,42 @@ public class Scaffold extends Module {
     // ---- Placement ----------------------------------------------------------
 
     private void executePlacement(EntityPlayerSP player, PlacementTarget target, int tick) {
-        ItemStack held = player.getHeldItem();
-        if (!isPlaceable(held)) return;
+        // A silent switch leaves the server on the block slot and the client on the item the
+        // player is holding. The client has to build this click with the block, so it is put
+        // on the server's slot for exactly this call and taken back afterwards, with no C09
+        // either way.
+        boolean swap = SlotSpoofer.active();
+        if (swap) SlotSpoofer.swapClientToServer();
+        try {
+            ItemStack held = player.getHeldItem();
+            if (!isPlaceable(held)) return;
 
-        mc.objectMouseOver = new MovingObjectPosition(target.hitVec, target.facing, target.pos);
-        if (mc.playerController.onPlayerRightClick(player, mc.theWorld, held,
-                target.pos, target.facing, target.hitVec)) {
-            if (options.isSwing()) player.swingItem();
-            ClickState.markUse(tick);
-            ticksSincePlace = 0;
-            lastPlacement = target;
-            currentMode().onPlace(target);
-            if (!currentMode().canSprint()) {
-                player.setSprinting(false);
-                player.sprintingTicksLeft = 0;
+            mc.objectMouseOver = new MovingObjectPosition(target.hitVec, target.facing, target.pos);
+            if (mc.playerController.onPlayerRightClick(player, mc.theWorld, held,
+                    target.pos, target.facing, target.hitVec)) {
+                if (options.isSwing()) player.swingItem();
+                ClickState.markUse(tick);
+                ticksSincePlace = 0;
+                lastPlacement = target;
+                currentMode().onPlace(target);
+                if (!currentMode().canSprint()) {
+                    player.setSprinting(false);
+                    player.sprintingTicksLeft = 0;
+                }
             }
+        } finally {
+            if (swap) SlotSpoofer.restoreClient();
+            placement = null;
         }
-        placement = null;
+    }
+
+    /**
+     * The stack placement will use. With a silent switch the server holds the block slot while
+     * the client still shows the player's own item, so the server's slot is what decides
+     * whether there is anything to place.
+     */
+    private ItemStack heldForPlacement(EntityPlayerSP player) {
+        return SlotSpoofer.active() ? InventoryStateTracker.heldStack() : player.getHeldItem();
     }
 
     /**
@@ -647,11 +669,17 @@ public class Scaffold extends Module {
      */
     private void suppressVanillaUse() {
         EntityPlayerSP player = mc.thePlayer;
-        if (player == null || !isPlaceable(player.getHeldItem())) return;
+        if (player == null || !isPlaceable(heldForPlacement(player))) return;
         setRightClickDelay(4);
     }
 
     private void setRightClickDelay(int delay) {
+        // The mixin accessor is a direct field write; the reflection below only runs if the
+        // mixin was not applied.
+        if (mc instanceof MinecraftAccessor) {
+            ((MinecraftAccessor) mc).potassium$rightClickDelayTimer(delay);
+            return;
+        }
         if (rightClickDelayField == null) {
             try {
                 rightClickDelayField = ReflectionHelper.findField(Minecraft.class,
@@ -673,7 +701,7 @@ public class Scaffold extends Module {
         if (event.button != 1 || !event.buttonstate) return;
         EntityPlayerSP player = mc.thePlayer;
         if (player == null) return;
-        if (isPlaceable(player.getHeldItem())) event.setCanceled(true);
+        if (isPlaceable(heldForPlacement(player))) event.setCanceled(true);
     }
 
     // ---- Hotbar -------------------------------------------------------------
@@ -681,13 +709,23 @@ public class Scaffold extends Module {
     private boolean selectBlock(boolean force) {
         EntityPlayerSP player = mc.thePlayer;
         if (player == null) return false;
-        boolean usable = isPlaceable(player.getHeldItem());
+        // A hotbar key sends its own C09, which ends the silent switch from the server's side.
+        SlotSpoofer.syncWithServer();
+        boolean usable = isPlaceable(heldForPlacement(player));
         if (usable) return true;
         if (!options.isChangeSlot()) return false;
 
         int slot = findBlockSlot(player);
         if (slot < 0) return false;
         if (!force && !slotChanged) return false;
+
+        if (options.isSilentSwitch()) {
+            // The server is told about the block slot while the client keeps showing the
+            // item the player picked; the swap happens per placement, in executePlacement.
+            if (!SlotSpoofer.active() || SlotSpoofer.serverSlot() != slot) SlotSpoofer.enable(slot);
+            slotChanged = true;
+            return true;
+        }
 
         if (originalSlot < 0) originalSlot = player.inventory.currentItem;
         player.inventory.currentItem = slot;
@@ -721,12 +759,19 @@ public class Scaffold extends Module {
     }
 
     private void sendSlot(int slot) {
+        InventoryStateTracker.noteSlot(slot);
         if (mc.getNetHandler() != null) {
             mc.getNetHandler().addToSendQueue(new C09PacketHeldItemChange(slot));
         }
     }
 
     private void restoreSlot(EntityPlayerSP player) {
+        if (SlotSpoofer.active()) {
+            SlotSpoofer.disable();
+            originalSlot = -1;
+            slotChanged = false;
+            return;
+        }
         if (originalSlot < 0) return;
         int slot = originalSlot;
         originalSlot = -1;
@@ -793,23 +838,6 @@ public class Scaffold extends Module {
         }
     }
 
-    /**
-     * Remembers the rotation the tick's movement packet carried. It is what the server holds
-     * when this module's click arrives at the start of the next tick, and it is the only
-     * rotation its placement check can be judged against.
-     */
-    @SubscribeEvent(priority = EventPriority.LOWEST)
-    public void onClientTickEnd(TickEvent.ClientTickEvent event) {
-        if (event.phase != TickEvent.Phase.END) return;
-        if (SilentLook.sentAimTick() >= 0) {
-            serverYaw = SilentLook.sentAimYaw();
-            serverPitch = SilentLook.sentAimPitch();
-        } else {
-            serverYaw = Float.NaN;
-            serverPitch = Float.NaN;
-        }
-    }
-
     // ---- Lifetime -----------------------------------------------------------
 
     @Override
@@ -831,11 +859,10 @@ public class Scaffold extends Module {
         aimPitch = Float.NaN;
         firstTurn = true;
         rotationJitter = 0.0F;
+        if (SlotSpoofer.active()) SlotSpoofer.disable();
         originalSlot = -1;
         slotChanged = false;
         nextClickTime = 0L;
-        serverYaw = Float.NaN;
-        serverPitch = Float.NaN;
         sprintSuppressed = false;
         sprintKeySuppressed = false;
         safeWalk.reset();
@@ -858,8 +885,6 @@ public class Scaffold extends Module {
         lastPlacement = null;
         placeReady = false;
         rotating = false;
-        serverYaw = Float.NaN;
-        serverPitch = Float.NaN;
         placementFinder.solver().reset();
         placementScanner.lastResult = null;
         currentMode().reset();

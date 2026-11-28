@@ -1,6 +1,7 @@
 package com.potassium.module;
 
 import com.potassium.gui.Theme;
+import com.potassium.mixin.S14PacketEntityAccessor;
 import com.potassium.settings.BooleanSetting;
 import com.potassium.settings.SliderSetting;
 import com.potassium.util.RenderUtil;
@@ -492,6 +493,11 @@ public class Backtrack extends Module {
     }
 
     private int s14EntityId(S14PacketEntity packet) {
+        // Direct field read when the accessor mixin is applied, reflection when it is not.
+        try {
+            return ((S14PacketEntityAccessor) packet).potassium$entityId();
+        } catch (Throwable ignored) {
+        }
         if (S14_ENTITY_ID != null) {
             try {
                 Object value = S14_ENTITY_ID.get(packet);

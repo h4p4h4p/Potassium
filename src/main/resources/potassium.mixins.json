@@ -1,0 +1,14 @@
+{
+  "required": false,
+  "minVersion": "0.7.11",
+  "package": "com.potassium.mixin",
+  "compatibilityLevel": "JAVA_8",
+  "refmap": "potassium.refmap.json",
+  "client": [
+    "MinecraftAccessor",
+    "S14PacketEntityAccessor"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

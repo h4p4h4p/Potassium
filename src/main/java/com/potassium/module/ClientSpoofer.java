@@ -1,13 +1,9 @@
 package com.potassium.module;
 
 import com.potassium.settings.ModeSetting;
+import com.potassium.util.PacketBus;
 import io.netty.buffer.Unpooled;
-import io.netty.channel.Channel;
-import io.netty.channel.ChannelHandlerContext;
-import io.netty.channel.ChannelOutboundHandlerAdapter;
-import io.netty.channel.ChannelPromise;
 import net.minecraft.client.Minecraft;
-import net.minecraft.network.NetworkManager;
 import net.minecraft.network.PacketBuffer;
 import net.minecraft.network.play.client.C17PacketCustomPayload;
 import net.minecraftforge.common.MinecraftForge;
@@ -32,17 +28,13 @@ public class ClientSpoofer extends Module {
     public static final String MODE_CHEATBREAKER = "CheatBreaker";
 
     private static final String BRAND_CHANNEL = "MC|Brand";
-    private static final String HANDLER_NAME = "potassium_clientspoofer";
 
     private final ModeSetting modeSetting = new ModeSetting("Mode",
             new String[]{MODE_VANILLA, MODE_BADLION, MODE_LUNAR, MODE_GEYSER, MODE_CHEATBREAKER}, 0);
 
     private final Minecraft mc = Minecraft.getMinecraft();
 
-    private Channel boundChannel;
-    private BrandHandler handler;
-
-    // Shared with the Netty handler, which runs on the channel thread.
+    // Shared with the packet bus listener, which runs on the channel thread.
     private volatile String lastBrand;
     private volatile boolean spoofedThisConnection;
 
@@ -50,6 +42,7 @@ public class ClientSpoofer extends Module {
         super("ClientSpoofer", Category.EXPLOITS);
         settings.add(modeSetting);
         MinecraftForge.EVENT_BUS.register(this);
+        PacketBus.subscribe("ClientSpoofer", PacketBus.Direction.OUTBOUND, 0, this::onPacket);
     }
 
     private String mode() {
@@ -75,21 +68,14 @@ public class ClientSpoofer extends Module {
     @SubscribeEvent
     public void onClientConnected(FMLNetworkEvent.ClientConnectedToServerEvent event) {
         spoofedThisConnection = false;
-        if (!isEnabled()) return;
-        install(event.manager.channel());
     }
 
     @SubscribeEvent
     public void onClientTick(TickEvent.ClientTickEvent event) {
         if (event.phase != TickEvent.Phase.START) return;
 
-        if (!isEnabled()) {
-            if (handler != null || boundChannel != null) removeHandler();
-            return;
-        }
+        if (!isEnabled()) return;
         if (mc.thePlayer == null || mc.theWorld == null) return;
-
-        armChannel();
 
         String brand = brand();
         if (!spoofedThisConnection || !brand.equals(lastBrand)) {
@@ -110,98 +96,28 @@ public class ClientSpoofer extends Module {
         return new C17PacketCustomPayload(BRAND_CHANNEL, buffer);
     }
 
-    private void armChannel() {
-        if (mc.getNetHandler() == null) return;
-        NetworkManager manager = mc.getNetHandler().getNetworkManager();
-        if (manager == null) return;
-        install(manager.channel());
-    }
+    /** Replaces the client's own brand payload before it reaches the server. */
+    private void onPacket(PacketBus.Event event) {
+        if (!isEnabled() || event.direction() != PacketBus.Direction.OUTBOUND) return;
+        if (!(event.packet() instanceof C17PacketCustomPayload)) return;
+        C17PacketCustomPayload packet = (C17PacketCustomPayload) event.packet();
+        if (!BRAND_CHANNEL.equals(packet.getChannelName())) return;
 
-    private void install(Channel channel) {
-        if (channel == null || !channel.isActive()) return;
-
-        if (boundChannel != channel) {
-            removeFrom(boundChannel);
-            boundChannel = channel;
-            handler = null;
-        }
-        if (handler != null) return;
-
-        final BrandHandler created = new BrandHandler();
-        handler = created;
-        Runnable add = () -> {
-            try {
-                if (isEnabled() && channel.isActive()
-                        && channel.pipeline().get(HANDLER_NAME) == null) {
-                    channel.pipeline().addBefore("packet_handler", HANDLER_NAME, created);
-                }
-            } catch (Exception ignored) {
-            }
-        };
-
-        if (channel.eventLoop().inEventLoop()) {
-            // ClientConnectedToServerEvent runs on the channel thread; installing inline is
-            // what guarantees the handler is present before the join packet is written.
-            add.run();
-        } else {
-            try {
-                channel.eventLoop().execute(add);
-            } catch (Exception ignored) {
-            }
-        }
-    }
-
-    private void removeHandler() {
-        handler = null;
-        Channel channel = boundChannel;
-        boundChannel = null;
-        removeFrom(channel);
-    }
-
-    private void removeFrom(Channel channel) {
-        if (channel == null || !channel.isActive()) return;
-        try {
-            channel.eventLoop().execute(() -> {
-                try {
-                    if (channel.pipeline().get(HANDLER_NAME) != null) {
-                        channel.pipeline().remove(HANDLER_NAME);
-                    }
-                } catch (Exception ignored) {
-                }
-            });
-        } catch (Exception ignored) {
-        }
+        String brand = brand();
+        event.replace(brandPacket(brand));
+        lastBrand = brand;
+        spoofedThisConnection = true;
     }
 
     @Override
     public void onEnable() {
         lastBrand = null;
         spoofedThisConnection = false;
-        armChannel();
     }
 
     @Override
     public void onDisable() {
         lastBrand = null;
         spoofedThisConnection = false;
-        removeHandler();
-    }
-
-    private class BrandHandler extends ChannelOutboundHandlerAdapter {
-
-        @Override
-        public void write(ChannelHandlerContext ctx, Object msg, ChannelPromise promise)
-                throws Exception {
-            if (msg instanceof C17PacketCustomPayload) {
-                C17PacketCustomPayload packet = (C17PacketCustomPayload) msg;
-                if (BRAND_CHANNEL.equals(packet.getChannelName())) {
-                    String brand = brand();
-                    msg = brandPacket(brand);
-                    lastBrand = brand;
-                    spoofedThisConnection = true;
-                }
-            }
-            super.write(ctx, msg, promise);
-        }
     }
 }

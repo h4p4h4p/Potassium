@@ -5,14 +5,10 @@ import com.potassium.settings.ModeSetting;
 import com.potassium.settings.RangeSetting;
 import com.potassium.settings.Setting;
 import com.potassium.settings.SliderSetting;
-import io.netty.channel.Channel;
+import com.potassium.util.PacketBus;
 import com.potassium.util.PlayerUtil;
-import io.netty.channel.ChannelHandler;
-import io.netty.channel.ChannelHandlerContext;
-import io.netty.channel.ChannelInboundHandlerAdapter;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.entity.EntityPlayerSP;
-import net.minecraft.network.NetworkManager;
 import net.minecraft.network.Packet;
 import net.minecraft.network.play.server.S12PacketEntityVelocity;
 import net.minecraft.network.play.server.S27PacketExplosion;
@@ -21,14 +17,11 @@ import net.minecraft.util.Vec3;
 import net.minecraftforge.common.MinecraftForge;
 import net.minecraftforge.fml.common.eventhandler.SubscribeEvent;
 import net.minecraftforge.fml.common.gameevent.TickEvent;
-import net.minecraftforge.fml.common.network.FMLNetworkEvent;
 
 public class AntiKnockback extends Module {
 
     public static final String MODE_MODIFY = "Modify";
     public static final String MODE_JUMP_RESET = "Jump Reset";
-
-    private static final String HANDLER_NAME = "potassium_antiknockback";
 
     private final ModeSetting modeSetting = new ModeSetting("Mode",
             new String[]{MODE_MODIFY, MODE_JUMP_RESET}, 0);
@@ -44,11 +37,8 @@ public class AntiKnockback extends Module {
             new BooleanSetting("Only While Moving", false);
 
     private final Minecraft mc = Minecraft.getMinecraft();
-    private final AntiKnockbackHandler handler = new AntiKnockbackHandler();
-    private Channel boundChannel;
     private volatile int playerId = -1;
     private volatile boolean active;
-    private volatile boolean injected;
 
     // Snapshot settings for the Netty thread; Minecraft settings are not thread-safe.
     private volatile boolean jumpResetMode;
@@ -70,6 +60,7 @@ public class AntiKnockback extends Module {
         settings.add(accuracySetting);
         settings.add(onlyWhileMovingSetting);
         MinecraftForge.EVENT_BUS.register(this);
+        PacketBus.subscribe("AntiKnockback", PacketBus.Direction.INBOUND, 0, this::onPacket);
     }
 
     @Override
@@ -106,7 +97,6 @@ public class AntiKnockback extends Module {
         if (!isEnabled()) return;
         EntityPlayerSP player = mc.thePlayer;
         if (player != null) playerId = player.getEntityId();
-        armChannel();
 
         // Rise's jump reset: jump on the tick after a hit that carried upward knockback, so the
         // jump's own motion answers the knockback. The packet itself goes through untouched.
@@ -132,7 +122,7 @@ public class AntiKnockback extends Module {
         // Fallback for a pipeline that has not accepted the handler yet. The packet path is
         // primary; this still prevents the knockback if the channel was replaced or injection
         // failed.
-        if (!jumpResetMode && !injected && player != null && player.velocityChanged
+        if (!jumpResetMode && !PacketBus.isInstalled() && player != null && player.velocityChanged
                 && allowsNow()) {
             player.motionX *= horizontal;
             player.motionY *= vertical;
@@ -178,20 +168,16 @@ public class AntiKnockback extends Module {
         active = isEnabled();
     }
 
-    private void armChannel() {
-        if (mc.getNetHandler() == null) return;
-        NetworkManager manager = mc.getNetHandler().getNetworkManager();
-        if (manager == null) return;
-        armChannel(manager.channel());
-    }
-
     /**
      * A packet can arrive after the client tick but before the player tick. Catch the
      * residual velocity at player-tick start when the pipeline handler is unavailable.
      */
     @SubscribeEvent
     public void onPlayerTick(TickEvent.PlayerTickEvent event) {
-        if (event.phase != TickEvent.Phase.START || !active || injected || jumpResetMode) return;
+        if (event.phase != TickEvent.Phase.START || !active || PacketBus.isInstalled()
+                || jumpResetMode) {
+            return;
+        }
         if (!allowsNow()) return;
         EntityPlayerSP player = mc.thePlayer;
         if (player == null || event.player != player || !player.velocityChanged) {
@@ -204,31 +190,43 @@ public class AntiKnockback extends Module {
     }
 
     /**
-     * The handler is sharable and stays installed while the module is disabled. That
-     * avoids both the old "failed to attach once, never retry" path and the disable/
-     * re-enable race that could remove a freshly attached handler.
+     * Rewrites the player's own knockback before the client applies it.
+     *
+     * <p>The bus calls this on the channel's event loop with the module's settings snapshotted,
+     * so nothing here reads a config value that could change mid-packet.</p>
      */
-    private void armChannel(Channel channel) {
-        if (channel == null || !channel.isActive()) return;
-        boundChannel = channel;
+    private void onPacket(PacketBus.Event event) {
+        if (!active || event.direction() != PacketBus.Direction.INBOUND) return;
+        Packet packet = event.packet();
 
-        if (channel.pipeline().get(HANDLER_NAME) == null) {
-            try {
-                channel.pipeline().addBefore("packet_handler", HANDLER_NAME, handler);
-                injected = true;
-            } catch (Exception ignored) {
-                injected = false;
-            }
-        } else {
-            injected = channel.pipeline().get(HANDLER_NAME) == handler;
+        int id = playerId;
+        if (id < 0 && mc.thePlayer != null) {
+            id = mc.thePlayer.getEntityId();
+            playerId = id;
         }
-    }
+        boolean allowed = !onlyWhileMoving || moving;
 
-    @SubscribeEvent
-    public void onClientConnected(FMLNetworkEvent.ClientConnectedToServerEvent event) {
-        if (!isEnabled() || event.manager == null) return;
-        syncSettings();
-        armChannel(event.manager.channel());
+        if (packet instanceof S12PacketEntityVelocity) {
+            S12PacketEntityVelocity p = (S12PacketEntityVelocity) packet;
+            if (allowed && id >= 0 && p.getEntityID() == id) {
+                if (jumpResetMode) {
+                    // Only a hit with upward knockback is worth jumping against.
+                    if (p.getMotionY() > 0) jumpResetPending = true;
+                } else {
+                    event.replace(new S12PacketEntityVelocity(id,
+                            p.getMotionX() / 8000.0 * horizontal,
+                            p.getMotionY() / 8000.0 * vertical,
+                            p.getMotionZ() / 8000.0 * horizontal));
+                }
+            }
+        } else if (packet instanceof S27PacketExplosion && !jumpResetMode && allowed) {
+            S27PacketExplosion p = (S27PacketExplosion) packet;
+            event.replace(new S27PacketExplosion(p.getX(), p.getY(), p.getZ(), p.getStrength(),
+                    p.getAffectedBlockPositions(),
+                    new Vec3(p.func_149149_c() * horizontal,
+                            p.func_149144_d() * vertical,
+                            p.func_149147_e() * horizontal)));
+        }
     }
 
     @Override
@@ -236,7 +234,6 @@ public class AntiKnockback extends Module {
         syncSettings();
         active = true;
         if (mc.thePlayer != null) playerId = mc.thePlayer.getEntityId();
-        armChannel();
     }
 
     @Override
@@ -244,45 +241,5 @@ public class AntiKnockback extends Module {
         jumpResetPending = false;
         jumpResetLate = false;
         active = false;
-        injected = false;
-        boundChannel = null;
-    }
-
-    @ChannelHandler.Sharable
-    private class AntiKnockbackHandler extends ChannelInboundHandlerAdapter {
-
-        @Override
-        public void channelRead(ChannelHandlerContext ctx, Object msg) throws Exception {
-            if (active && msg instanceof Packet) {
-                int id = playerId;
-                if (id < 0 && mc.thePlayer != null) {
-                    id = mc.thePlayer.getEntityId();
-                    playerId = id;
-                }
-                boolean allowed = !onlyWhileMoving || moving;
-                if (msg instanceof S12PacketEntityVelocity) {
-                    S12PacketEntityVelocity p = (S12PacketEntityVelocity) msg;
-                    if (allowed && id >= 0 && p.getEntityID() == id) {
-                        if (jumpResetMode) {
-                            // Only a hit with upward knockback is worth jumping against.
-                            if (p.getMotionY() > 0) jumpResetPending = true;
-                        } else {
-                            msg = new S12PacketEntityVelocity(id,
-                                    p.getMotionX() / 8000.0 * horizontal,
-                                    p.getMotionY() / 8000.0 * vertical,
-                                    p.getMotionZ() / 8000.0 * horizontal);
-                        }
-                    }
-                } else if (msg instanceof S27PacketExplosion && !jumpResetMode && allowed) {
-                    S27PacketExplosion p = (S27PacketExplosion) msg;
-                    msg = new S27PacketExplosion(p.getX(), p.getY(), p.getZ(), p.getStrength(),
-                            p.getAffectedBlockPositions(),
-                            new Vec3(p.func_149149_c() * horizontal,
-                                    p.func_149144_d() * vertical,
-                                    p.func_149147_e() * horizontal));
-                }
-            }
-            ctx.fireChannelRead(msg);
-        }
     }
 }

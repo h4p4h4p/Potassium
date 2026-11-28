@@ -58,6 +58,7 @@ public final class ScaffoldSettings {
     public final BooleanSetting raycast;
     public final BooleanSetting swing;
     public final BooleanSetting changeSlot;
+    public final BooleanSetting silentSwitch;
     public final BooleanSetting waitForClick;
     public final SliderSetting extend;
     public final BooleanSetting safeWalkEnabled;
@@ -104,6 +105,7 @@ public final class ScaffoldSettings {
 
         swing = grouped(new BooleanSetting("Swing", true), ADDONS_GROUP);
         changeSlot = grouped(new BooleanSetting("Change Slot", true), ADDONS_GROUP);
+        silentSwitch = grouped(new BooleanSetting("Silent Switch", false), ADDONS_GROUP);
         waitForClick = grouped(new BooleanSetting("Wait for Click", false), ADDONS_GROUP);
         extend = grouped(new SliderSetting("Extend", 0, 0, 3, 1), ADDONS_GROUP);
 
@@ -183,6 +185,7 @@ public final class ScaffoldSettings {
         if (setting == extend) {
             return !mode().has(ScaffoldMode.CAP_EXTEND) || mode() instanceof ScaffoldMode.Rewound;
         }
+        if (setting == silentSwitch) return changeSlot.getValue();
         return true;
     }
 
@@ -212,6 +215,11 @@ public final class ScaffoldSettings {
 
     public boolean isChangeSlot() {
         return changeSlot.getValue();
+    }
+
+    /** True when the switch is client-side and the server keeps the block slot. */
+    public boolean isSilentSwitch() {
+        return changeSlot.getValue() && silentSwitch.getValue();
     }
 
     public boolean isWaitForClick() {
