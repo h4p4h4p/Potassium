@@ -5,7 +5,6 @@ import com.potassium.settings.ModeSetting;
 import com.potassium.settings.RangeSetting;
 import com.potassium.settings.Setting;
 import com.potassium.settings.SliderSetting;
-import com.potassium.mixin.MinecraftAccessor;
 import com.potassium.util.BlinkBlockQueue;
 import com.potassium.util.ClickState;
 import com.potassium.util.CombatArbiter;
@@ -725,9 +724,6 @@ public class KillAura extends Module {
 
     /** Minecraft.timer is private; accept both the MCP and SRG field names. */
     private float renderPartialTicks() {
-        if (clientTimer == null && mc instanceof MinecraftAccessor) {
-            clientTimer = ((MinecraftAccessor) mc).potassium$timer();
-        }
         if (clientTimer == null) {
             clientTimer = ReflectionHelper.getPrivateValue(Minecraft.class, mc,
                     "timer", "field_71428_T");

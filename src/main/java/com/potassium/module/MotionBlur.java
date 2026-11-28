@@ -3,6 +3,8 @@ package com.potassium.module;
 import com.potassium.module.render.motionblur.MotionBlurRenderer;
 import com.potassium.settings.ModeSetting;
 import com.potassium.settings.SliderSetting;
+import net.minecraftforge.client.event.RenderWorldLastEvent;
+import net.minecraftforge.fml.common.eventhandler.SubscribeEvent;
 
 /**
  * OpenAdjust's {@code MotionBlurModule}: three post-process blurs over the world frame, with
@@ -25,6 +27,21 @@ public class MotionBlur extends Module {
         settings.add(mode);
         settings.add(strength);
         renderer = new MotionBlurRenderer(this);
+        net.minecraftforge.common.MinecraftForge.EVENT_BUS.register(this);
+    }
+
+    /**
+     * OpenAdjust hooks its patched EntityRenderer. The last world pass leaves the same camera
+     * matrices bound, and this event runs between the world and the GUI, so all three blurs can
+     * draw here without a mixin into a class OptiFine also transforms.
+     */
+    @SubscribeEvent
+    public void onRenderWorldLast(RenderWorldLastEvent event) {
+        if (!isEnabled()) return;
+        renderer.beginFrame();
+        renderer.captureMatrices(event.partialTicks);
+        renderer.renderMonkey();
+        renderer.renderPost();
     }
 
     @Override

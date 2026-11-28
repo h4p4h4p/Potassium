@@ -1,6 +1,5 @@
 package com.potassium.module.render.motionblur;
 
-import com.potassium.mixin.ShaderGroupAccessor;
 import net.minecraft.client.renderer.GlStateManager;
 import net.minecraft.client.renderer.OpenGlHelper;
 import net.minecraft.client.renderer.texture.TextureUtil;
@@ -65,7 +64,7 @@ final class MonkeyBlurShader {
         depthCapture.prepare(target);
         if (shaders == null) {
             shaders = MotionBlurRenderer.loadShader(target, "monkey_blur");
-            Shader first = ((ShaderGroupAccessor) (Object) shaders).getShaders().get(0);
+            Shader first = MotionBlurRenderer.shaders(shaders).get(0);
             first.addAuxFramebuffer("depthtex", depthTexture,
                     target.framebufferWidth, target.framebufferHeight);
             first.addAuxFramebuffer("EntityMaskSampler", depthCapture.mask,
@@ -73,8 +72,7 @@ final class MonkeyBlurShader {
         }
         target.bindFramebuffer(false);
         copyDepth(target, depthTexture);
-        ShaderManager shader = ((ShaderGroupAccessor) (Object) shaders).getShaders().get(0)
-                .getShaderManager();
+        ShaderManager shader = MotionBlurRenderer.shaders(shaders).get(0).getShaderManager();
         shader.getShaderUniformOrDefault("strength").set(strength);
         shader.getShaderUniformOrDefault("cameraPosition")
                 .set((float) cameraX, (float) cameraY, (float) cameraZ);

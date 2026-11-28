@@ -1,7 +1,7 @@
 package com.potassium.module.render.motionblur;
 
-import com.potassium.mixin.ShaderGroupAccessor;
 import com.potassium.module.MotionBlur;
+import net.minecraftforge.fml.common.ObfuscationReflectionHelper;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.GlStateManager;
 import net.minecraft.client.renderer.OpenGlHelper;
@@ -16,8 +16,8 @@ import org.lwjgl.opengl.GL11;
 /**
  * OpenAdjust's {@code MotionBlurRenderer}: one frame of state shared by the three blurs.
  *
- * <p>The original is called from a patched {@code EntityRenderer}; this port is driven by
- * {@link com.potassium.mixin.MixinEntityRenderer} at the same points in the frame.</p>
+ * <p>The original is called from a patched {@code EntityRenderer}; this port runs from the
+ * module's {@code RenderWorldLastEvent} handler, between the world and the GUI.</p>
  */
 public final class MotionBlurRenderer {
 
@@ -113,7 +113,7 @@ public final class MotionBlurRenderer {
                 }
                 float blend = phosphorHistory
                         ? lastStrength / 100.0F * 3.0F + 0.69999999F - 0.0099999998F : 0.0F;
-                for (Shader shader : ((ShaderGroupAccessor) (Object) phosphor).getShaders()) {
+                for (Shader shader : shaders(phosphor)) {
                     shader.getShaderManager().getShaderUniformOrDefault("BlendFactor").set(blend);
                     shader.getShaderManager().getShaderUniformOrDefault("Mode").set(0.0F);
                 }
@@ -171,7 +171,7 @@ public final class MotionBlurRenderer {
             GlStateManager.enableDepth();
             GlStateManager.depthMask(true);
             GlStateManager.enableAlpha();
-            ((ShaderGroupAccessor) (Object) group).getMainFramebuffer().bindFramebuffer(true);
+            mainFramebuffer(group).bindFramebuffer(true);
         }
     }
 
@@ -198,5 +198,17 @@ public final class MotionBlurRenderer {
 
     private MotionBlurMode mode() {
         return MotionBlurMode.byName(module.mode.getValue());
+    }
+
+    /** ShaderGroup keeps both fields private in vanilla; OptiFine does not rename them. */
+    @SuppressWarnings("unchecked")
+    static java.util.List<Shader> shaders(ShaderGroup group) {
+        return ObfuscationReflectionHelper.getPrivateValue(ShaderGroup.class, group,
+                "listShaders", "field_148031_d");
+    }
+
+    private static Framebuffer mainFramebuffer(ShaderGroup group) {
+        return ObfuscationReflectionHelper.getPrivateValue(ShaderGroup.class, group,
+                "mainFramebuffer", "field_148035_a");
     }
 }

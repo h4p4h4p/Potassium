@@ -8,7 +8,6 @@ import com.potassium.module.scaffold.SafeWalk;
 import com.potassium.module.scaffold.ScaffoldMode;
 import com.potassium.module.scaffold.ScaffoldSettings;
 import com.potassium.settings.Setting;
-import com.potassium.mixin.MinecraftAccessor;
 import com.potassium.util.ClickState;
 import com.potassium.util.CombatArbiter;
 import com.potassium.util.InventoryStateTracker;
@@ -744,12 +743,6 @@ public class Scaffold extends Module {
     }
 
     private void setRightClickDelay(int delay) {
-        // The mixin accessor is a direct field write; the reflection below only runs if the
-        // mixin was not applied.
-        if (mc instanceof MinecraftAccessor) {
-            ((MinecraftAccessor) mc).potassium$rightClickDelayTimer(delay);
-            return;
-        }
         if (rightClickDelayField == null) {
             try {
                 rightClickDelayField = ReflectionHelper.findField(Minecraft.class,
