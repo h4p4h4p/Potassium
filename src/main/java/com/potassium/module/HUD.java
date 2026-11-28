@@ -37,6 +37,7 @@ public class HUD extends Module {
             };
     private final BooleanSetting keybindViewerSetting = new BooleanSetting("Keybind Viewer", false);
     private final BooleanSetting fpsCounterSetting = new BooleanSetting("FPS Counter", false);
+    private final BooleanSetting bpsCounterSetting = new BooleanSetting("BPS Counter", false);
     private final ModeSetting panelModeSetting = new ModeSetting("Background",
             new String[]{PANEL_MODE_PANEL, PANEL_MODE_REGULAR}, 0);
     private final SliderSetting bgDimSetting = new SliderSetting("BG Dim", 60, 0, 100, 5);
@@ -50,6 +51,7 @@ public class HUD extends Module {
         settings.add(hiddenModulesSetting);
         settings.add(keybindViewerSetting);
         settings.add(fpsCounterSetting);
+        settings.add(bpsCounterSetting);
         settings.add(panelModeSetting);
         settings.add(bgDimSetting);
     }
@@ -103,6 +105,10 @@ public class HUD extends Module {
 
     public boolean shouldShowFps() {
         return fpsCounterSetting.getValue();
+    }
+
+    public boolean shouldShowBps() {
+        return bpsCounterSetting.getValue();
     }
 
     /**

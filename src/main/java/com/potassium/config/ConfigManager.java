@@ -92,6 +92,8 @@ public class ConfigManager {
         }
         lines.add("Hud.fps.x=" + hud.getFps().getStoredX());
         lines.add("Hud.fps.y=" + hud.getFps().getStoredY());
+        lines.add("Hud.bps.x=" + hud.getBps().getStoredX());
+        lines.add("Hud.bps.y=" + hud.getBps().getStoredY());
         if (hud.getTargetHud().hasStoredPosition()) {
             lines.add("Hud.targetHud.x=" + hud.getTargetHud().getStoredX());
             lines.add("Hud.targetHud.y=" + hud.getTargetHud().getStoredY());
@@ -130,6 +132,8 @@ public class ConfigManager {
         }
         hud.getFps().setX(intValue(values, "Hud.fps.x", hud.getFps().getX()));
         hud.getFps().setY(intValue(values, "Hud.fps.y", hud.getFps().getY()));
+        hud.getBps().setX(intValue(values, "Hud.bps.x", hud.getBps().getX()));
+        hud.getBps().setY(intValue(values, "Hud.bps.y", hud.getBps().getY()));
         if (values.containsKey("Hud.targetHud.x")) {
             hud.getTargetHud().setX(intValue(values, "Hud.targetHud.x",
                     hud.getTargetHud().getX()));
