@@ -23,7 +23,12 @@ import java.util.Locale;
  */
 public class HudManager {
 
-    private static final int BPS_TICKS = 20;
+    /** The speed is averaged over a short window of real time, not a fixed tick count. */
+    private static final long BPS_WINDOW_NANOS = 250_000_000L;
+    /** A tick that arrives later than this means the game was paused or stalled. */
+    private static final long BPS_MAX_TICK_NANOS = 500_000_000L;
+    /** Enough for the Timer module's maximum of ten times vanilla, plus slack. */
+    private static final int BPS_MAX_SAMPLES = 256;
 
     private final Minecraft mc = Minecraft.getMinecraft();
     private final WatermarkHudElement watermark = new WatermarkHudElement();
@@ -36,11 +41,15 @@ public class HudManager {
     private final List<TextHudElement> texts = new ArrayList<>();
     private final List<HudElement> elements = new ArrayList<>();
 
-    private final double[] tickDistances = new double[BPS_TICKS];
-    private int tickIndex;
+    private final double[] sampleDistances = new double[BPS_MAX_SAMPLES];
+    private final long[] sampleDurations = new long[BPS_MAX_SAMPLES];
+    private final long[] sampleTimes = new long[BPS_MAX_SAMPLES];
+    private int sampleIndex;
+    private int sampleCount;
     private double blocksPerSecond;
     private double lastX;
     private double lastZ;
+    private long lastSampleTime;
     private boolean hasLast;
     private int textCounter;
 
@@ -179,25 +188,74 @@ public class HudManager {
 
         EntityPlayerSP player = mc.thePlayer;
         if (player == null || mc.theWorld == null) {
-            tickIndex = 0;
-            blocksPerSecond = 0.0D;
+            resetBps();
             hasLast = false;
-            for (int i = 0; i < tickDistances.length; i++) tickDistances[i] = 0.0D;
             return;
         }
 
-        double distance = hasLast ? Math.hypot(player.posX - lastX, player.posZ - lastZ) : 0.0D;
-        // A teleport or dimension change is not walking; do not let it inflate the reading.
-        if (distance > 10.0D) distance = 0.0D;
-        tickDistances[tickIndex] = distance;
-        tickIndex = (tickIndex + 1) % tickDistances.length;
+        long now = System.nanoTime();
+        if (!hasLast) {
+            lastX = player.posX;
+            lastZ = player.posZ;
+            lastSampleTime = now;
+            hasLast = true;
+            return;
+        }
+
+        double distance = Math.hypot(player.posX - lastX, player.posZ - lastZ);
+        long duration = now - lastSampleTime;
         lastX = player.posX;
         lastZ = player.posZ;
-        hasLast = true;
+        lastSampleTime = now;
 
-        double sum = 0.0D;
-        for (double tickDistance : tickDistances) sum += tickDistance;
-        // The window is exactly one second, so the distance travelled is the rate.
-        blocksPerSecond = sum * (20.0D / BPS_TICKS);
+        // A teleport, dimension change or stalled game is not walking; start over rather
+        // than let one huge step dominate the reading.
+        if (duration <= 0L || duration > BPS_MAX_TICK_NANOS || distance > 10.0D) {
+            resetBps();
+            return;
+        }
+
+        sampleDistances[sampleIndex] = distance;
+        sampleDurations[sampleIndex] = duration;
+        sampleTimes[sampleIndex] = now;
+        sampleIndex = (sampleIndex + 1) % BPS_MAX_SAMPLES;
+        if (sampleCount < BPS_MAX_SAMPLES) sampleCount++;
+        updateBlocksPerSecond(now);
+    }
+
+    /**
+     * Divides the distance covered by the time it actually took. Counting ticks instead
+     * would under-report whenever the Timer module raises the tick rate, and a stalled
+     * frame would count as if no time had passed at all.
+     */
+    private void updateBlocksPerSecond(long now) {
+        int oldest = (sampleIndex - sampleCount + BPS_MAX_SAMPLES) % BPS_MAX_SAMPLES;
+        double distance = 0.0D;
+        long windowStart = 0L;
+        boolean found = false;
+
+        for (int i = 0; i < sampleCount; i++) {
+            int index = (oldest + i) % BPS_MAX_SAMPLES;
+            if (now - sampleTimes[index] > BPS_WINDOW_NANOS) continue;
+            if (!found) {
+                found = true;
+                windowStart = sampleTimes[index] - sampleDurations[index];
+            }
+            distance += sampleDistances[index];
+        }
+
+        if (!found) {
+            blocksPerSecond = 0.0D;
+            return;
+        }
+
+        long elapsed = now - windowStart;
+        blocksPerSecond = elapsed > 0L ? distance * 1.0E9D / elapsed : 0.0D;
+    }
+
+    private void resetBps() {
+        sampleIndex = 0;
+        sampleCount = 0;
+        blocksPerSecond = 0.0D;
     }
 }
