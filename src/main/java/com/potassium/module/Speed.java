@@ -11,6 +11,7 @@ import net.minecraft.entity.player.EntityPlayer;
 import net.minecraft.potion.Potion;
 import net.minecraft.potion.PotionEffect;
 import net.minecraft.util.AxisAlignedBB;
+import com.potassium.util.CombatArbiter;
 import com.potassium.util.MovementInputStack;
 import com.potassium.util.SilentLook;
 import io.netty.channel.Channel;
@@ -40,6 +41,7 @@ public class Speed extends Module {
     public static final String MODE_NORMAL = "Normal";
     public static final String MODE_LEGIT_HOP = "LegitHop";
     public static final String MODE_NCP = "NCP";
+    public static final String MODE_45_SPEED = "45Speed";
 
     // OpenAdjust's NCP constants, from its NcpSpeedMode.
     private static final double NCP_BASE_SPEED = 0.2873D;
@@ -56,7 +58,7 @@ public class Speed extends Module {
     private static final float NCP_DAMAGE_FALL_LIMIT = 2.5F;
 
     private final ModeSetting modeSetting = new ModeSetting("Mode",
-            new String[]{MODE_NORMAL, MODE_LEGIT_HOP, MODE_NCP}, 0);
+            new String[]{MODE_NORMAL, MODE_LEGIT_HOP, MODE_NCP, MODE_45_SPEED}, 0);
     private final SliderSetting speedSetting = new SliderSetting("Speed", 1.2, 0.5, 5.0, 0.05);
     private final BooleanSetting autoJumpSetting = new BooleanSetting("Auto Jump", true);
     // The three settings its NcpSpeedMode exposes.
@@ -101,7 +103,7 @@ public class Speed extends Module {
     @Override
     public boolean isSettingVisible(Setting setting) {
         if (setting == speedSetting) {
-            return !legitHop() && !ncp();
+            return !fortyFive() && !legitHop() && !ncp();
         }
         if (setting == autoJumpSetting) {
             return !legitHop() && !ncp();
@@ -123,6 +125,10 @@ public class Speed extends Module {
 
     private boolean ncp() {
         return MODE_NCP.equals(mode());
+    }
+
+    private boolean fortyFive() {
+        return MODE_45_SPEED.equals(mode());
     }
 
     @SubscribeEvent
@@ -155,6 +161,11 @@ public class Speed extends Module {
             return;
         }
 
+        if (fortyFive()) {
+            tick45Speed((EntityPlayerSP) player);
+            return;
+        }
+
         if (!PlayerUtil.isMoving(player) || player.isSneaking()) return;
 
         if (player.onGround) {
@@ -180,6 +191,36 @@ public class Speed extends Module {
         if (mc.thePlayer == null) return false;
         if (mc.gameSettings != null && mc.gameSettings.keyBindJump.isKeyDown()) return true;
         return mc.thePlayer.movementInput != null && mc.thePlayer.movementInput.jump;
+    }
+
+    // ---- 45Speed: Augustus's FortyFiveDegreeSpeedMode ----------------------
+
+    /**
+     * Augustus's 45Degree mode. The server is given the camera's yaw while the player is on
+     * the ground, then a yaw 45 degrees to the side of the walk for every airborne tick, and
+     * the camera's own yaw again as soon as the player lands. The walk itself is untouched:
+     * only the rotation in the movement packet is offset, so the server reads a diagonal
+     * under a straight-line walk, which is the allowance the mode spends. It is a silent aim
+     * like KillAura's, so the view never turns; landing is the snap back.
+     */
+    private void tick45Speed(EntityPlayerSP player) {
+        if (mc.currentScreen != null) return;
+        if (!PlayerUtil.isMoving(player) || player.isSneaking()) return;
+
+        if (player.onGround) {
+            if (autoJumpSetting.getValue() && !vanillaJumps()) {
+                player.jump();
+            }
+            return;
+        }
+
+        // Its strafe sign: the side key being held, or one fixed side when walking straight.
+        int strafe = (mc.gameSettings.keyBindLeft.isKeyDown() ? 1 : 0)
+                - (mc.gameSettings.keyBindRight.isKeyDown() ? 1 : 0);
+        int sign = strafe != 0 ? strafe : 1;
+        SilentLook.request("Speed", CombatArbiter.PRIORITY_MOVEMENT,
+                player.rotationYaw - 45.0F * sign, player.rotationPitch,
+                SilentLook.MovementFix.NONE);
     }
 
     private static double horizontalSpeed(EntityPlayer player) {
@@ -531,6 +572,7 @@ public class Speed extends Module {
     @Override
     public String getTag() {
         if (ncp()) return MODE_NCP;
+        if (fortyFive()) return MODE_45_SPEED;
         if (legitHop()) return MODE_LEGIT_HOP;
         double value = speedSetting.getValue();
         return (Math.round(value * 100.0) / 100.0) + "x";
