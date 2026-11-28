@@ -101,7 +101,7 @@ public class Scaffold extends Module {
     private int baseY = Integer.MIN_VALUE;
     private boolean noAscendActive;
     private boolean preventsAscend;
-    private PlacementTarget lastPlacement;
+    public PlacementTarget lastPlacement;
     private PlacementTarget placement;
     private boolean placeReady;
     private boolean rotating;
@@ -378,21 +378,23 @@ public class Scaffold extends Module {
         path.add(new PathPoint(x, y, z, onGround));
 
         for (int tick = 0; tick < 4; tick++) {
+            // Vanilla applies the key input first and the friction after it, which is what
+            // decides where the player actually ends up next tick.
             if (onGround) {
-                motionX *= 0.546D;
-                motionZ *= 0.546D;
                 if (input != null) {
                     motionX += input.xCoord * 0.1D;
                     motionZ += input.zCoord * 0.1D;
                 }
+                motionX *= 0.546D;
+                motionZ *= 0.546D;
                 motionY = 0.0D;
             } else {
-                motionX *= 0.91D;
-                motionZ *= 0.91D;
                 if (input != null) {
                     motionX += input.xCoord * 0.02D;
                     motionZ += input.zCoord * 0.02D;
                 }
+                motionX *= 0.91D;
+                motionZ *= 0.91D;
                 motionY = (motionY - 0.08D) * 0.98D;
             }
             x += motionX;
