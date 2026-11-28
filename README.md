@@ -1,6 +1,8 @@
 !! Mod by AL3XMABAH0
 !! Use % for chat CMDS
 !! Check Releases for Potassium jars and srcs.
+!! Only runs with Forge 1.8.9
+!! Don't ask for an injectable version please.
 
 ## Building
 
