@@ -6,7 +6,9 @@
   "refmap": "potassium.refmap.json",
   "client": [
     "MinecraftAccessor",
-    "S14PacketEntityAccessor"
+    "S14PacketEntityAccessor",
+    "MixinEntityRenderer",
+    "ShaderGroupAccessor"
   ],
   "injectors": {
     "defaultRequire": 1

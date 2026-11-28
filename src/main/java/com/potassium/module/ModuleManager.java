@@ -44,6 +44,7 @@ public class ModuleManager {
         modules.add(new ViewModel());
         modules.add(new Rotations());
         modules.add(new HUD());
+        modules.add(new MotionBlur());
         modules.add(new ClientSpoofer());
         modules.add(new Flight());
         modules.add(new AntiVoid());
