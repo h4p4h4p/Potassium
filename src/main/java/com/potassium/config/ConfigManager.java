@@ -22,7 +22,7 @@ import java.util.Map;
 public class ConfigManager {
 
     private static final String CONFIG_VERSION_KEY = "potassium.configVersion";
-    private static final String CONFIG_VERSION = "11";
+    private static final String CONFIG_VERSION = "12";
 
     private final File file;
 
@@ -210,6 +210,25 @@ public class ConfigManager {
         else if (raw.equalsIgnoreCase("false")) values.put("Scaffold.Tower", "0");
     }
 
+    /**
+     * Scaffold was recoded to OpenAdjust's modes and settings. The old mode indices meant
+     * Normal/Legit, which do not line up with Normal/Hypixel/Rewound/NCP, so a saved Legit
+     * would silently turn on Hypixel. The old Sprint and Tower switches become the options
+     * that replaced them.
+     */
+    private static void migrateScaffoldOptions(Map<String, String> values) {
+        String mode = values.get("Scaffold.Mode");
+        if (mode != null && !"0".equals(mode)) values.put("Scaffold.Mode", "0");
+        String sprint = values.get("Scaffold.Sprint");
+        if (sprint != null) {
+            values.put("Scaffold.Allow Sprint", "0".equals(sprint) ? "true" : "false");
+        }
+        String tower = values.get("Scaffold.Tower");
+        if (tower != null) {
+            values.put("Scaffold.Tower", "0".equals(tower) ? "false" : "true");
+        }
+    }
+
     /** Converts the old 0..100 AntiKnockback sliders to the current -1..1 multipliers. */
     private static void migrateAntiKnockbackScale(Map<String, String> values, String key) {
         String raw = values.get(key);
@@ -373,6 +392,7 @@ public class ConfigManager {
         migrateAntiKnockbackScale(values, "AntiKnockback.Horizontal");
         migrateAntiKnockbackScale(values, "AntiKnockback.Vertical");
         migrateScaffoldTower(values);
+        if (configVersion < 12) migrateScaffoldOptions(values);
         // KillAura and LeftClicker use a CPS range instead of a single number; RightClicker's
         // CPS control is now the same two-handle slider. A single CPS becomes a range whose
         // ends meet, which preserves its old fixed value.
