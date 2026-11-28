@@ -15,8 +15,9 @@ import net.minecraft.client.entity.EntityPlayerSP;
  * never sees the look that justified it, and the two sides disagree about the world.
  *
  * <p>Claims are ranked. A combat aim outranks a placement aim, a placement aim outranks a
- * held pose such as Scaffold's Face Backward, and easing back to the camera yields to all of
- * them. Equal ranks keep the first claim of the tick, so the answer never depends on handler
+ * held pose such as Scaffold's built-in backward look, and easing back to the camera yields to
+ * all of them. Equal ranks keep the first claim of the tick, so the answer never depends on
+ * handler
  * order. A module that loses the claim is told so and can hold its click back instead of
  * acting on a rotation the server never received.
  *
@@ -27,7 +28,7 @@ public final class CombatArbiter {
 
     /** Easing an aim back to the camera; every real aim outranks it. */
     public static final int PRIORITY_RETURN = 10;
-    /** A pose held for its own sake, such as Scaffold's Face Backward. */
+    /** A pose held for its own sake, such as Scaffold's built-in backward look. */
     public static final int PRIORITY_POSE = 40;
     /** An aim a block placement depends on. */
     public static final int PRIORITY_MOVEMENT = 60;
